@@ -1,0 +1,10 @@
+export KERAS_BACKEND=jax
+
+# Step 1: Generate training pairs (~5M)
+python -m tsgp.data_generator
+
+# Step 2: Train transformer (8 epochs)
+u
+
+# Step 3: Run experiments on PMLB benchmarks
+python -m tsgp.run_experiments --weights checkpoints/tsgp_final.weights.h5

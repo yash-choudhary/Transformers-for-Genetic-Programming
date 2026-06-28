@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(brew list *)",
+      "Bash(pdftotext \"/Users/yashchoudhary/Documents/Professional/MSBA/Trimester 3/Capstone/2501.18479v1.pdf\" -)"
+    ]
+  }
+}
