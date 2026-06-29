@@ -1,1 +1,3 @@
 data/
+checkpoints/
+tsgp/__pycache__/

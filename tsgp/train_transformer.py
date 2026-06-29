@@ -1,5 +1,7 @@
+import glob
 import os
 import pickle
+import re
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -38,6 +40,54 @@ class TSGPTrainingModel(keras.Model):
         return self.tsgp_model(inputs, training=training)
 
 
+def find_latest_checkpoint(checkpoint_dir):
+    pattern = os.path.join(checkpoint_dir, "tsgp_epoch_*.weights.h5")
+    files = glob.glob(pattern)
+    if not files:
+        return None, 0
+    epoch_numbers = []
+    for f in files:
+        match = re.search(r"tsgp_epoch_(\d+)\.weights\.h5$", f)
+        if match:
+            epoch_numbers.append((int(match.group(1)), f))
+    if not epoch_numbers:
+        return None, 0
+    epoch_numbers.sort(key=lambda x: x[0])
+    latest_epoch, latest_file = epoch_numbers[-1]
+    return latest_file, latest_epoch
+
+
+def prompt_resume(checkpoint_dir):
+    latest_file, latest_epoch = find_latest_checkpoint(checkpoint_dir)
+    if latest_file is None:
+        return 0, None
+
+    print(f"\nFound existing checkpoint: {latest_file} (epoch {latest_epoch})")
+    pattern = os.path.join(checkpoint_dir, "tsgp_epoch_*.weights.h5")
+    all_files = sorted(glob.glob(pattern))
+    print("Available checkpoints:")
+    for f in all_files:
+        print(f"  {os.path.basename(f)}")
+
+    while True:
+        choice = input(
+            f"\nResume from epoch {latest_epoch}? [Y/n/epoch_number]: "
+        ).strip()
+        if choice == "" or choice.lower() == "y":
+            return latest_epoch, latest_file
+        if choice.lower() == "n":
+            return 0, None
+        try:
+            epoch_num = int(choice)
+            target = os.path.join(
+                checkpoint_dir, f"tsgp_epoch_{epoch_num}.weights.h5")
+            if os.path.exists(target):
+                return epoch_num, target
+            print(f"  Checkpoint for epoch {epoch_num} not found.")
+        except ValueError:
+            print("  Enter Y, n, or an epoch number.")
+
+
 def train_model(training_data, checkpoint_dir="checkpoints",
                 epochs=None, batch_size=None, verbose=True):
     if epochs is None:
@@ -47,7 +97,16 @@ def train_model(training_data, checkpoint_dir="checkpoints",
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    start_epoch, resume_path = prompt_resume(checkpoint_dir)
+
     base_model = create_model()
+
+    if resume_path is not None:
+        base_model.load_weights(resume_path)
+        if verbose:
+            print(f"Loaded weights from {resume_path}")
+            print(f"Resuming training from epoch {start_epoch + 1}")
+
     wrapper = TSGPTrainingModel(base_model)
 
     optimizer = keras.optimizers.legacy.Adam(
@@ -74,7 +133,7 @@ def train_model(training_data, checkpoint_dir="checkpoints",
     if verbose:
         base_model.summary()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch + 1, epochs + 1):
         n = len(training_data)
         indices = np.random.permutation(n)
         total_loss = 0.0
