@@ -10,6 +10,15 @@ from .transformer_model import create_model
 from .tsgp_search import run_tsgp, run_stdgp_baseline
 
 
+def _load_model_weights(model, path):
+    """Load weights from .npy (new) or legacy .weights.h5 format."""
+    if path.endswith(".npy"):
+        data = np.load(path, allow_pickle=True)
+        model.set_weights(list(data))
+    else:
+        model.load_weights(path)
+
+
 DATASETS = ["ERA", "ESL", "Galaxy", "LEV", "pollen"]
 
 
@@ -38,7 +47,7 @@ def run_all_experiments(model_weights_path, output_dir="results",
     os.makedirs(output_dir, exist_ok=True)
 
     model = create_model()
-    model.load_weights(model_weights_path)
+    _load_model_weights(model, model_weights_path)
 
     all_results = {}
 

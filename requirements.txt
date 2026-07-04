@@ -1,6 +1,9 @@
+# Base requirements (Mac CPU / Linux / Windows CPU)
+# For GPU:
+#   macOS (Apple Silicon) — add: tensorflow-metal==1.1.*
+#   Windows GPU          — use requirements-windows-gpu.txt instead (needs TF 2.10)
+#   Linux GPU            — replace tensorflow with tensorflow[and-cuda]==2.15.*
 tensorflow==2.15.*
-tensorflow-metal==1.1.*
-keras==2.15.*
 deap>=1.4
 numpy>=1.24,<2.0
 scikit-learn>=1.3
