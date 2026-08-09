@@ -531,6 +531,64 @@ scalar cannot fix an objective that does not reward it.
 Incidental: on real training parents, offspring are already 29–41 nodes against a training
 distribution of ~41. **Size was never the problem** — fourth independent confirmation.
 
+### 2026-08-09f — Pair quality: difficulty is intrinsic; k=3 exonerated
+
+Tested whether the 42% median edit distance is intrinsic to semantic k-NN pairing or an
+artifact of how our function pool was built.
+
+| SD bucket | median SD | median edit distance | median output len |
+|---|---|---|---|
+| [0, 0.01) | 0.0048 | 0.222 | 39 |
+| [0.05, 0.15) | 0.0869 | 0.364 | 37 |
+| [0.5, 2) | 0.9401 | 0.566 | 25 |
+| [10, ∞) | 19.555 | 0.727 | 13 |
+
+corr(log1p(SD), edit distance) = **+0.444** — the pairing is sensible, not random.
+
+**Intrinsic.** Even at near-zero SD, 22% of tokens differ, and there are **zero identical
+pairs**. Semantically indistinguishable functions are written differently — `add(x0,x1)` vs
+`add(x1,x0)` alone, since add and mul are commutative. Irreducible under prefix tokens.
+
+**k=3 exonerated.** Neighbour ranks 0/1/2 have median SD 0.23 / 0.31 / 0.38. Dropping to k=1
+would barely change the pairs.
+
+**New lead (SD-range mismatch).** The operator is *always* queried at `SD_d = 0.1`, where
+pairs have edit distance 0.32, but is *trained* across the full range including a tail at
+0.727 that teaches large structural rewrites. Working SD conditioning would separate those
+regimes; we proved it cannot. So at inference the model draws from its **marginal over all
+SD values** rather than the requested one — which explains achieved distance ~32 against a
+training median of 0.164.
+
+### 2026-08-09g — Low-SD training subset: NEGATIVE (deliberate deviation)
+
+**Deviation, deliberately.** Sect. 4.1 keeps every pair with `SD != 0 and SD < 100`; this run
+trained only on `SD <= 0.2` (2.7M of 5M pairs, `--max-sd 0.2`, `checkpoints_lowsd`). Run as a
+diagnostic of the marginal-distribution theory: the operator is always queried at
+`SD_d = 0.1` but trained across the full range, and since the conditioning is inert it should
+sample from its marginal rather than the requested distance.
+
+**Prediction:** removing the high-SD tail should pull achieved distance down toward 0.15.
+
+| | achieved SD | teacher-forced acc |
+|---|---|---|
+| baseline (full range, 8 ep) | 38.1 | 0.7997 |
+| low-SD @ep1 | 58.1 | 0.7096 |
+| low-SD @ep2 | 43.8 | 0.7235 |
+| low-SD @ep3 | 44.2 | 0.7337 |
+| low-SD @final (4 ep) | **50.1** | 0.7374 |
+
+**Result: worse, not better.** No convergence toward baseline; the controllability sweep is
+non-monotonic noise (52.1 → 48.8 → 45.8 → 27.7 → 58.8). Theory rejected.
+
+**Note this cuts in the paper's favour:** a deliberate departure from the specification made
+the operator worse. The paper's stated configuration is not what is holding the result back.
+
+**Measurement-noise caveat.** Across today's runs the *same baseline checkpoint* measured
+31.7 / 34.9 / 36.2 / 38.1 — about ±20% run to run, since the diagnostic samples
+stochastically. Low-SD measured 43.8–58.1. The ranges do not overlap so the conclusion
+stands, but differences below ~20% in any achieved-SD figure in this log should not be read
+as real.
+
 ### Hypotheses eliminated — final tally
 
 | # | Hypothesis | Verdict | Key evidence |
@@ -542,6 +600,7 @@ distribution of ~41. **Size was never the problem** — fourth independent confi
 | 5 | Autoregressive drift | Eliminated | Greedy decoding lands at the same distance as sampled |
 | 6 | Out-of-distribution parents | Eliminated | Within-run distance plateaus at the in-distribution floor |
 | 7 | SD encoding (numerics) | Eliminated | Normalised variant no better; still no response to SD_d |
+| 8 | Training SD range (deviation) | Eliminated | Low-SD subset made achieved distance worse (50.1 vs 38.1) |
 
 **Root cause, as far as the evidence reaches:** the operator must perform a one-to-many
 semantic-preserving transformation (42% of tokens change, many valid targets). The model

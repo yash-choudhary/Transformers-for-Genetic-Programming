@@ -278,11 +278,25 @@ def train_model(training_data, checkpoint_dir="checkpoints",
 
 def train_from_data(data_path, checkpoint_dir="checkpoints", fresh=False,
                     batch_size=None, epochs=None, normalize_sd=None,
-                    verbose=True):
+                    max_sd=None, verbose=True):
     setup_gpu()
     if verbose:
         print(f"Loading training data from {data_path} ...")
     training_data = load_training_data(data_path)
+
+    if max_sd is not None:
+        # DEVIATION from Sect. 4.1, which keeps every pair with
+        # SD != 0 and SD < 100. Restricting the range is a diagnostic: the
+        # operator is always queried at SD_d = 0.1 but trained across the whole
+        # range, and the SD conditioning is measurably inert, so the model
+        # samples from its marginal rather than the requested distance.
+        before = len(training_data)
+        training_data = [d for d in training_data if d["sd"] <= max_sd]
+        if verbose:
+            print(f"DEVIATION: filtered to SD <= {max_sd} -> "
+                  f"{len(training_data):,} of {before:,} pairs "
+                  f"({len(training_data)/before*100:.1f}%)")
+
     if verbose:
         bs = batch_size or config.TRANSFORMER_BATCH_SIZE
         ep = epochs or config.TRANSFORMER_EPOCHS
@@ -322,6 +336,9 @@ if __name__ == "__main__":
     parser.add_argument("--sd-normalize", action="store_true",
                         help="Feed SD as log1p + standardised instead of the "
                              "raw scalar. Must match at inference time.")
+    parser.add_argument("--max-sd", type=float, default=None,
+                        help="DEVIATION from Sect. 4.1: train only on pairs "
+                             "with SD <= this. Diagnostic use only.")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -329,4 +346,4 @@ if __name__ == "__main__":
                     fresh=args.fresh, batch_size=args.batch_size,
                     epochs=args.epochs,
                     normalize_sd=True if args.sd_normalize else None,
-                    verbose=not args.quiet)
+                    max_sd=args.max_sd, verbose=not args.quiet)
