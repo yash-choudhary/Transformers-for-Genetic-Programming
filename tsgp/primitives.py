@@ -47,7 +47,11 @@ def setup_deap(pset):
     toolbox.register("compile", gp.compile, pset=pset)
     toolbox.register("select", tools.selTournament,
                      tournsize=config.GP_TOURNAMENT_SIZE)
-    toolbox.register("mate", gp.cxOnePoint)
+    # Paper Sect. 4.1: subtree crossover with a 10% internal node bias toward
+    # selecting terminal nodes. DEAP's termpb is the probability of picking a
+    # terminal, so termpb=0.1 gives the 90/10 internal/terminal split.
+    toolbox.register("mate", gp.cxOnePointLeafBiased,
+                     termpb=config.GP_INTERNAL_NODE_BIAS)
     toolbox.register("expr_mut", gp.genFull,
                      min_=config.GP_MUTATION_DEPTH_MIN,
                      max_=config.GP_MUTATION_DEPTH_MAX)
@@ -113,7 +117,10 @@ def setup_datagen_toolbox(pset):
     toolbox.register("select", _double_tournament, fitness_size=5,
                      parsimony_size=1.4, fitness_first=True)
 
-    toolbox.register("mate", gp.cxOnePoint)
+    # Same crossover bias as the search runs -- Sect. 4.1 states the data
+    # generation uses the Table 1 GP parameters.
+    toolbox.register("mate", gp.cxOnePointLeafBiased,
+                     termpb=config.GP_INTERNAL_NODE_BIAS)
     toolbox.register("expr_mut", gp.genFull,
                      min_=config.GP_MUTATION_DEPTH_MIN,
                      max_=config.GP_MUTATION_DEPTH_MAX)

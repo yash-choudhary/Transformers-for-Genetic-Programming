@@ -204,7 +204,11 @@ def generate_training_data(output_dir, num_problems=None, verbose=True):
         training_data.append({
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "sd": sd,
+            # Plain float, not the np.float32 that FAISS returns: a numpy
+            # scalar makes the pickle depend on the writer's numpy version
+            # (numpy >= 1.26 emits numpy._core references that older numpy
+            # cannot resolve), which breaks loading in a different env.
+            "sd": float(sd),
         })
 
     pkl_path = os.path.join(output_dir, "training_pairs.pkl")
@@ -230,4 +234,19 @@ def generate_training_data(output_dir, num_problems=None, verbose=True):
 
 
 if __name__ == "__main__":
-    data = generate_training_data("data/training", verbose=True)
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Generate the transformer's semantic training pairs.")
+    parser.add_argument("--output", default="data/training",
+                        help="Directory for training_pairs.pkl/.csv. Point "
+                             "this at a new directory to keep an existing "
+                             "generation intact.")
+    parser.add_argument("--problems", type=int,
+                        default=config.NUM_SYNTHETIC_PROBLEMS,
+                        help="Number of synthetic SR problems")
+    parser.add_argument("--quiet", action="store_true")
+    args = parser.parse_args()
+
+    generate_training_data(args.output, num_problems=args.problems,
+                           verbose=not args.quiet)
