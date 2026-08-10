@@ -15,3 +15,14 @@ __pycache__/
 
 # Incidental screenshots
 *.png
+
+# Run logs from the v7 session
+*.log
+
+# Scratch/smoke result dirs (the keepers are results_v7 and results_anneal)
+results_smoke/
+results_smoke_k4/
+results_anneal_smoke/
+results_k1/
+results_k8/
+results_k16/

@@ -60,12 +60,21 @@ def fetch_dataset(name, cache_dir=PMLB_CACHE_DIR, attempts=5, base_delay=2.0):
     )
 
 
-def load_and_prepare_dataset(name, cache_dir=PMLB_CACHE_DIR):
+def load_and_prepare_dataset(name, cache_dir=PMLB_CACHE_DIR, split_seed=42):
+    """Load, split 50/50 and standardise one PMLB benchmark.
+
+    ``split_seed`` was previously pinned at 42 for every run, so all 30
+    "independent runs" of a dataset shared a single train/test partition and
+    the only variation between them came from the GP itself. Sect. 4.1 splits
+    "the data sets ... into training and test sets in a 50/50 ratio" for 30
+    independent runs; callers now pass their unit seed so each run gets its
+    own partition. The scalers are still fitted on the training half only.
+    """
     X, y = fetch_dataset(name, cache_dir=cache_dir)
     X = X[:, :config.NUM_FEATURES]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.5, random_state=42)
+        X, y, test_size=0.5, random_state=split_seed)
 
     scaler_X = StandardScaler()
     X_train = scaler_X.fit_transform(X_train)

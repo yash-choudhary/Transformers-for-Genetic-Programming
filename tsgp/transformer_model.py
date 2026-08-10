@@ -101,6 +101,7 @@ class TSGPTransformer(keras.Model):
                  max_seq_len=config.TRANSFORMER_MAX_SEQ_LEN,
                  dropout_rate=config.TRANSFORMER_DROPOUT,
                  normalize_sd=None,
+                 sd_encoding=None,
                  **kwargs):
         super().__init__(**kwargs)
         if dff is None:
@@ -108,6 +109,8 @@ class TSGPTransformer(keras.Model):
         self.d_model = d_model
         self.max_seq_len = max_seq_len
         self.vocab_size = vocab_size
+        self.sd_encoding = (config.TRANSFORMER_SD_ENCODING
+                            if sd_encoding is None else sd_encoding)
         # Input transform only -- adds no weights, so checkpoints stay
         # interchangeable between the two variants. It must nevertheless match
         # how the model was trained, hence it is explicit rather than implicit.
@@ -119,7 +122,13 @@ class TSGPTransformer(keras.Model):
         self.enc_pos_encoding = PositionalEncoding(max_seq_len, d_model)
         self.dec_pos_encoding = PositionalEncoding(max_seq_len, d_model)
 
-        self.sd_projection = layers.Dense(d_model)
+        if self.sd_encoding == "binned":
+            self.sd_embedding = layers.Embedding(
+                config.TRANSFORMER_SD_NUM_BINS, d_model)
+            self.sd_projection = None
+        else:
+            self.sd_projection = layers.Dense(d_model)
+            self.sd_embedding = None
 
         self.enc_dropout = layers.Dropout(dropout_rate)
         self.dec_dropout = layers.Dropout(dropout_rate)
@@ -146,6 +155,32 @@ class TSGPTransformer(keras.Model):
         z = tf.math.log1p(tf.maximum(sd_input, 0.0))
         return (z - config.TRANSFORMER_SD_LOG_MEAN) / config.TRANSFORMER_SD_LOG_STD
 
+    def _sd_context(self, sd_input, like):
+        """One d_model vector per example, broadcast over `like`'s positions.
+
+        Training SDs are extremely skewed (p25 0.049, p50 0.164, p75 0.667, tail
+        to 100), so the bins are laid out on log10 over five decades. That
+        spends resolution where the pairs actually are -- and specifically at
+        the low end, where the operator is queried during search. The result is
+        scaled by sqrt(d_model) to match the token embeddings, so the
+        conditioning arrives at a magnitude that can compete with them.
+        """
+        if self.sd_encoding == "binned":
+            lo = float(np.log10(config.TRANSFORMER_SD_BIN_MIN))
+            hi = float(np.log10(config.TRANSFORMER_SD_BIN_MAX))
+            sd = tf.maximum(sd_input, config.TRANSFORMER_SD_BIN_MIN)
+            frac = (tf.math.log(sd) / float(np.log(10.0)) - lo) / (hi - lo)
+            nbins = config.TRANSFORMER_SD_NUM_BINS
+            bins = tf.cast(tf.floor(frac * nbins), tf.int32)
+            bins = tf.clip_by_value(bins, 0, nbins - 1)
+            vec = self.sd_embedding(bins) * np.sqrt(float(self.d_model))
+        else:
+            expanded = tf.expand_dims(tf.expand_dims(self._prep_sd(sd_input), -1), -1)
+            vec = self.sd_projection(expanded)
+            return tf.broadcast_to(vec, tf.shape(like))
+        # [B, d_model] -> [B, 1, d_model] -> broadcast over sequence positions
+        return tf.broadcast_to(tf.expand_dims(vec, 1), tf.shape(like))
+
     def encode(self, enc_input, sd_input, training=False):
         enc_padding_mask = self._create_padding_mask(enc_input)
 
@@ -153,10 +188,7 @@ class TSGPTransformer(keras.Model):
         x = x * np.sqrt(float(self.d_model))
         x = self.enc_pos_encoding(x)
 
-        sd_expanded = tf.expand_dims(tf.expand_dims(self._prep_sd(sd_input), -1), -1)
-        sd_embed = self.sd_projection(sd_expanded)
-        sd_embed = tf.broadcast_to(sd_embed, tf.shape(x))
-        x = x + sd_embed
+        x = x + self._sd_context(sd_input, x)
 
         x = self.enc_dropout(x, training=training)
         for enc_layer in self.encoder_layers_list:
@@ -179,10 +211,7 @@ class TSGPTransformer(keras.Model):
         x = x * np.sqrt(float(self.d_model))
         x = self.dec_pos_encoding(x)
 
-        sd_expanded = tf.expand_dims(tf.expand_dims(self._prep_sd(sd_input), -1), -1)
-        sd_embed = self.sd_projection(sd_expanded)
-        sd_embed = tf.broadcast_to(sd_embed, tf.shape(x))
-        x = x + sd_embed
+        x = x + self._sd_context(sd_input, x)
 
         x = self.dec_dropout(x, training=training)
         for dec_layer in self.decoder_layers_list:
@@ -202,8 +231,8 @@ class TSGPTransformer(keras.Model):
         return logits
 
 
-def create_model(normalize_sd=None):
-    model = TSGPTransformer(normalize_sd=normalize_sd)
+def create_model(normalize_sd=None, sd_encoding=None):
+    model = TSGPTransformer(normalize_sd=normalize_sd, sd_encoding=sd_encoding)
     enc_input = np.zeros((1, config.TRANSFORMER_MAX_SEQ_LEN), dtype=np.int32)
     dec_input = np.zeros((1, config.TRANSFORMER_MAX_SEQ_LEN), dtype=np.int32)
     sd_input = np.zeros((1,), dtype=np.float32)

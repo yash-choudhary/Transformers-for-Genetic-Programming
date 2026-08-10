@@ -7,9 +7,34 @@ from . import config
 
 
 def protdiv(left, right):
-    if abs(right) < 1e-6:
-        return 1.0
-    return left / right
+    """Protected division (Sect. 4.1: division by zero yields 1).
+
+    Works elementwise on numpy arrays as well as on scalars, so a whole data
+    set can be pushed through a compiled tree in one call instead of one call
+    per row. That is the dominant cost of every GP run here.
+    """
+    if np.isscalar(left) and np.isscalar(right):
+        return 1.0 if abs(right) < 1e-6 else left / right
+    right_arr = np.asarray(right, dtype=np.float64)
+    unsafe = np.abs(right_arr) < 1e-6
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        out = np.divide(np.asarray(left, dtype=np.float64),
+                        np.where(unsafe, 1.0, right_arr))
+    return np.where(unsafe, 1.0, out)
+
+
+def _evaluate_vectorised(func, X):
+    """Apply a compiled tree to every row of X at once.
+
+    A tree with no variables compiles to a constant, so the result has to be
+    broadcast back up to one value per row.
+    """
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        out = func(*[X[:, i] for i in range(X.shape[1])])
+    out = np.asarray(out, dtype=np.float64)
+    if out.ndim == 0 or out.shape != (X.shape[0],):
+        out = np.broadcast_to(out, (X.shape[0],)).astype(np.float64)
+    return out
 
 
 def _erc_generator():
@@ -66,10 +91,51 @@ def setup_deap(pset):
     return toolbox
 
 
+_FAST_OPS = {
+    "add": np.add,
+    "sub": np.subtract,
+    "mul": np.multiply,
+    "protdiv": protdiv,
+}
+
+
+def evaluate_semantics_fast(individual, X):
+    """Evaluate a tree on X without going through gp.compile.
+
+    gp.compile renders the tree to a Python source string and eval()s it, once
+    per tree. That is fine at one evaluation per individual per generation, but
+    semantic step control evaluates k candidates for every member of the
+    population -- k * 100 trees per generation -- and there the compile
+    dominates everything else (measured 21 min/unit at k=8 against 55 s at
+    k=1).
+
+    Walking the prefix sequence back-to-front with an operand stack gives the
+    same numbers with no code generation. Prefix order means a node's operands
+    are the subtrees that follow it, so processing in reverse leaves them on
+    the stack in argument order.
+    """
+    stack = []
+    for node in reversed(individual):
+        if isinstance(node, gp.Primitive):
+            args = [stack.pop() for _ in range(node.arity)]
+            stack.append(_FAST_OPS[node.name](*args))
+        else:
+            value = node.value
+            if isinstance(value, str) and value.startswith("x"):
+                stack.append(X[:, int(value[1:])])
+            else:
+                stack.append(float(value))
+    out = np.asarray(stack.pop(), dtype=np.float64)
+    if out.ndim == 0 or out.shape != (X.shape[0],):
+        out = np.broadcast_to(out, (X.shape[0],)).astype(np.float64)
+    return np.clip(np.nan_to_num(out, nan=0.0, posinf=1e6, neginf=-1e6),
+                   -1e6, 1e6)
+
+
 def evaluate_individual(individual, toolbox, X, y):
     func = toolbox.compile(expr=individual)
     try:
-        y_pred = np.array([func(*row) for row in X])
+        y_pred = _evaluate_vectorised(func, X)
         y_pred = np.nan_to_num(y_pred, nan=1e6, posinf=1e6, neginf=-1e6)
         y_pred = np.clip(y_pred, -1e6, 1e6)
         rmse = np.sqrt(np.mean((y - y_pred) ** 2))
@@ -77,13 +143,13 @@ def evaluate_individual(individual, toolbox, X, y):
             rmse = 1e6
     except Exception:
         rmse = 1e6
-    return (rmse,)
+    return (float(rmse),)
 
 
 def evaluate_semantics(individual, toolbox, X):
     func = toolbox.compile(expr=individual)
     try:
-        semantics = np.array([func(*row) for row in X], dtype=np.float64)
+        semantics = _evaluate_vectorised(func, X)
         semantics = np.nan_to_num(semantics, nan=0.0, posinf=1e6, neginf=-1e6)
         semantics = np.clip(semantics, -1e6, 1e6)
     except Exception:

@@ -132,20 +132,66 @@ def find_semantic_pairs(functions, semantics, valid_indices, k=None,
 
     distances, indices = index.search(semantics, k + 1)
 
+    # Walk the pool in a random order rather than insertion order. The pool is
+    # built by appending synthetic problems 1..50 in sequence, so the previous
+    # version -- which returned the moment TARGET_NUM_PAIRS was reached while
+    # iterating i in order -- silently dropped every problem past the point
+    # where the cap bound. The saved 5M-pair file hit the cap exactly, so the
+    # later synthetic problems contributed nothing at all.
+    order = np.random.permutation(n)
+
     pairs = []
-    for i in range(n):
+    excluded_no_neighbour = 0
+    for i in order:
+        kept_any = False
         for j_pos in range(k + 1):
             j = indices[i, j_pos]
-            if j == i:
+            if j == i or j < 0:
                 continue
-            sd = np.sqrt(distances[i, j_pos])
+            sd = np.sqrt(max(distances[i, j_pos], 0.0))
             if sd > 0 and sd < sd_max:
-                orig_i = valid_indices[i]
-                orig_j = valid_indices[j]
-                pairs.append((orig_i, orig_j, sd))
-            if len(pairs) >= config.TARGET_NUM_PAIRS:
-                return pairs
+                pairs.append((valid_indices[i], valid_indices[j], sd))
+                kept_any = True
+        if not kept_any:
+            excluded_no_neighbour += 1
+        if len(pairs) >= config.TARGET_NUM_PAIRS:
+            break
+
+    # Coverage is the number that matters for whether the operator will work on
+    # what the GP search actually feeds it: a function whose nearest neighbour
+    # is further than sd_max contributes no training pair at all, so the model
+    # never learns to vary anything that looks like it.
+    seen = min(n, len(order))
+    print(f"  pairs: {len(pairs):,} from {seen:,} pool functions visited; "
+          f"{excluded_no_neighbour:,} had no neighbour within SD<{sd_max} "
+          f"({excluded_no_neighbour / max(seen, 1) * 100:.1f}% uncovered)")
     return pairs
+
+
+def report_pool_coverage(semantics, valid_indices, out_path=None):
+    """Describe the semantic regime the pool actually covers.
+
+    The GP search starts from Ramped Half-and-Half, whose functions have very
+    large output norms; the pool is made of functions that survived stdGP
+    selection against standardised targets, whose norms are small. If those two
+    distributions do not overlap, the transformer is queried out of
+    distribution for the whole search and its offspring are close to random
+    draws -- which is what we measure on the current checkpoint.
+    """
+    norms = np.linalg.norm(semantics, axis=1)
+    q = [1, 5, 25, 50, 75, 95, 99]
+    lines = ["pool semantic norms ||s(f)||:"]
+    lines += [f"  p{p:<3} {np.percentile(norms, p):12.3f}" for p in q]
+    lines.append(f"  mean {norms.mean():.3f}   max {norms.max():.3f}")
+    for thr in (10, 50, 100, 500):
+        lines.append(f"  fraction with norm > {thr:<4}: "
+                     f"{np.mean(norms > thr):.4f}")
+    text = "\n".join(lines)
+    print(text)
+    if out_path:
+        with open(out_path, "w") as f:
+            f.write(text + "\n")
+    return norms
 
 
 def generate_training_data(output_dir, num_problems=None, verbose=True):
@@ -191,6 +237,8 @@ def generate_training_data(output_dir, num_problems=None, verbose=True):
     semantics, valid_indices = compute_all_semantics(all_functions, pset)
     if verbose:
         print(f"Valid functions with finite semantics: {len(valid_indices)}")
+        report_pool_coverage(semantics, valid_indices,
+                             os.path.join(output_dir, "pool_coverage.txt"))
         print("Finding semantic pairs...")
 
     pairs = find_semantic_pairs(all_functions, semantics, valid_indices)

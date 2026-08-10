@@ -174,7 +174,7 @@ def masked_loss(y_true, y_pred):
 
 def train_model(training_data, checkpoint_dir="checkpoints",
                 epochs=None, batch_size=None, fresh=False, normalize_sd=None,
-                verbose=True):
+                sd_encoding=None, verbose=True):
     if epochs is None:
         epochs = config.TRANSFORMER_EPOCHS
     if batch_size is None:
@@ -197,10 +197,16 @@ def train_model(training_data, checkpoint_dir="checkpoints",
     else:
         start_epoch, resume_path = prompt_resume(checkpoint_dir)
 
-    base_model = create_model(normalize_sd=normalize_sd)
+    base_model = create_model(normalize_sd=normalize_sd,
+                              sd_encoding=sd_encoding)
     if verbose:
-        print(f"SD conditioning: "
-              f"{'log1p + standardised' if base_model.normalize_sd else 'raw scalar'}")
+        if base_model.sd_encoding == "binned":
+            print(f"SD conditioning: {config.TRANSFORMER_SD_NUM_BINS} log1p bins "
+                  f"-> learned embedding, scaled like the token embeddings")
+        else:
+            print(f"SD conditioning: rank-1 Dense on the "
+                  f"{'log1p-standardised' if base_model.normalize_sd else 'raw'} "
+                  f"scalar")
 
     if resume_path is not None:
         _load_checkpoint(base_model, resume_path)
@@ -224,14 +230,21 @@ def train_model(training_data, checkpoint_dir="checkpoints",
 
     enc_input = batch_encode_encoder(input_tokens)
     dec_full = batch_encode_decoder(output_tokens)
-    dec_input = dec_full[:, :-1]
-    dec_target = dec_full[:, 1:]
+    dec_input = np.ascontiguousarray(dec_full[:, :-1])
+    dec_target = np.ascontiguousarray(dec_full[:, 1:])
+
+    # The token lists and the combined decoder array are no longer needed once
+    # the id arrays exist. On 5M pairs they are several GB each, and holding
+    # them for the whole run is the difference between fitting in RAM alongside
+    # a diagnostic process and swapping.
+    del dec_full, input_tokens, output_tokens
+    training_data = None
 
     if verbose:
         base_model.summary()
 
+    n = len(enc_input)
     for epoch in range(start_epoch + 1, epochs + 1):
-        n = len(training_data)
         indices = np.random.permutation(n)
         total_loss = 0.0
         num_batches = 0
@@ -278,7 +291,7 @@ def train_model(training_data, checkpoint_dir="checkpoints",
 
 def train_from_data(data_path, checkpoint_dir="checkpoints", fresh=False,
                     batch_size=None, epochs=None, normalize_sd=None,
-                    max_sd=None, verbose=True):
+                    max_sd=None, sd_encoding=None, verbose=True):
     setup_gpu()
     if verbose:
         print(f"Loading training data from {data_path} ...")
@@ -308,7 +321,8 @@ def train_from_data(data_path, checkpoint_dir="checkpoints", fresh=False,
 
     model = train_model(training_data, checkpoint_dir=checkpoint_dir,
                         epochs=epochs, batch_size=batch_size, fresh=fresh,
-                        normalize_sd=normalize_sd, verbose=verbose)
+                        normalize_sd=normalize_sd, sd_encoding=sd_encoding,
+                        verbose=verbose)
     return model
 
 
@@ -339,6 +353,15 @@ if __name__ == "__main__":
     parser.add_argument("--max-sd", type=float, default=None,
                         help="DEVIATION from Sect. 4.1: train only on pairs "
                              "with SD <= this. Diagnostic use only.")
+    parser.add_argument("--sd-encoding", choices=["linear", "binned"],
+                        default=None,
+                        help="How SD reaches the layers. 'linear' is the "
+                             "original rank-1 Dense on the raw scalar, whose "
+                             "magnitude at SD_d=0.1 is 0.3%% of the token "
+                             "embeddings. 'binned' looks up a learned "
+                             "embedding over log1p bins at the same scale as "
+                             "the tokens. The paper does not specify an "
+                             "encoding. Default comes from config.")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -346,4 +369,5 @@ if __name__ == "__main__":
                     fresh=args.fresh, batch_size=args.batch_size,
                     epochs=args.epochs,
                     normalize_sd=True if args.sd_normalize else None,
-                    max_sd=args.max_sd, verbose=not args.quiet)
+                    max_sd=args.max_sd, sd_encoding=args.sd_encoding,
+                    verbose=not args.quiet)

@@ -92,14 +92,37 @@ def _write_atomic(path, payload):
     os.replace(tmp, path)
 
 
-def load_model(weights_path, normalize_sd=None):
+def detect_sd_encoding(weights_path):
+    """Infer how a checkpoint encodes SD, from its weight shapes.
+
+    The two encodings carry different parameters -- "linear" a Dense kernel of
+    shape (1, d_model), "binned" an Embedding of shape (num_bins, d_model) --
+    so a checkpoint can identify itself and callers cannot silently load an old
+    model under the new default.
+    """
+    if not weights_path.endswith(".npy"):
+        return None
+    from . import config
+    data = np.load(weights_path, allow_pickle=True)
+    shapes = {tuple(np.asarray(w).shape) for w in data}
+    if (config.TRANSFORMER_SD_NUM_BINS, config.TRANSFORMER_HIDDEN_DIM) in shapes:
+        return "binned"
+    if (1, config.TRANSFORMER_HIDDEN_DIM) in shapes:
+        return "linear"
+    return None
+
+
+def load_model(weights_path, normalize_sd=None, sd_encoding=None):
     """Build the transformer and load .npy (current) or .weights.h5 (legacy).
 
     `normalize_sd` must match how the checkpoint was trained; it changes no
-    weights, only how SD is fed in.
+    weights, only how SD is fed in. `sd_encoding` does change the weights, so
+    it is detected from the file unless the caller pins it.
     """
     from .transformer_model import create_model
-    model = create_model(normalize_sd=normalize_sd)
+    if sd_encoding is None:
+        sd_encoding = detect_sd_encoding(weights_path)
+    model = create_model(normalize_sd=normalize_sd, sd_encoding=sd_encoding)
     if weights_path.endswith(".npy"):
         data = np.load(weights_path, allow_pickle=True)
         model.set_weights(list(data))
@@ -109,7 +132,7 @@ def load_model(weights_path, normalize_sd=None):
 
 
 def run_unit(dataset, method, run, model=None, output_dir=RESULTS_DIR,
-             temperature=None, verbose=True):
+             temperature=None, step_k=None, step_anneal=None, verbose=True):
     """Execute one unit and persist its result. Returns the payload."""
     from .tsgp_search import run_tsgp, run_stdgp_baseline
 
@@ -121,12 +144,16 @@ def run_unit(dataset, method, run, model=None, output_dir=RESULTS_DIR,
     seed = unit_seed(dataset, method, run)
     set_seeds(seed)
 
-    X_train, X_test, y_train, y_test = load_and_prepare_dataset(dataset)
+    # Each run gets its own 50/50 partition, seeded from the unit identity, so
+    # the 30 runs are independent in the split as well as in the search.
+    X_train, X_test, y_train, y_test = load_and_prepare_dataset(
+        dataset, split_seed=seed)
 
     started = time.perf_counter()
     if method == "tsgp":
         best_ind, stats = run_tsgp(model, X_train, y_train, X_test, y_test,
-                                   temperature=temperature, verbose=verbose)
+                                   temperature=temperature, step_k=step_k,
+                                   step_anneal=step_anneal, verbose=verbose)
     else:
         best_ind, stats = run_stdgp_baseline(X_train, y_train, X_test, y_test,
                                              verbose=verbose)
@@ -156,6 +183,14 @@ def run_unit(dataset, method, run, model=None, output_dir=RESULTS_DIR,
         "temperature": (None if method == "stdgp" else
                         (config.TSGP_TEMPERATURE if temperature is None
                          else temperature)),
+        # k = 1 is the paper's operator; k > 1 is the Sect. 5 step-size control.
+        # Recorded so a results directory can never be ambiguous about which of
+        # the two it holds.
+        "step_k": (None if method == "stdgp" else
+                   (config.TSGP_STEP_K if step_k is None else step_k)),
+        "step_anneal": (None if method == "stdgp" else
+                        bool(config.TSGP_STEP_ANNEAL if step_anneal is None
+                             else step_anneal)),
     }
     _write_atomic(unit_path(dataset, method, run, output_dir), payload)
     return payload
