@@ -148,16 +148,20 @@ class TSGPSearchOperator:
         return [tokens_to_tree(decode(seq), self.pset) for seq in sequences]
 
 
-def step_target(gen, generations, y_train):
+def step_target(gen, generations, y_train, frac_start=None, frac_end=None):
     """Desired parent-offspring semantic distance at this generation.
 
-    Geometric decay between TSGP_STEP_FRAC_START and TSGP_STEP_FRAC_END times
-    ||y_train||, chosen to imitate the annealing stdGP gets for free from
-    crossover between converging parents. Expressed relative to ||y_train||
-    so the same schedule is meaningful on every data set.
+    Geometric decay between frac_start and frac_end times ||y_train||, chosen
+    to imitate the annealing stdGP gets for free from crossover between
+    converging parents. Expressed relative to ||y_train|| so the same schedule
+    is meaningful on every data set.
+
+    frac_start == frac_end gives a constant target, which is the control that
+    separates "annealing helps" from "merely targeting a distance helps".
     """
+    a = config.TSGP_STEP_FRAC_START if frac_start is None else frac_start
+    b = config.TSGP_STEP_FRAC_END if frac_end is None else frac_end
     norm = float(np.linalg.norm(y_train))
-    a, b = config.TSGP_STEP_FRAC_START, config.TSGP_STEP_FRAC_END
     frac = a * (b / a) ** (gen / max(generations, 1))
     return norm * frac
 
@@ -239,7 +243,7 @@ def _update_best_ever(pop, best_ever, toolbox):
 
 def run_tsgp(model, X_train, y_train, X_test, y_test,
              pop_size=None, generations=None, temperature=None, step_k=None,
-             step_anneal=None, verbose=True):
+             step_anneal=None, frac_start=None, frac_end=None, verbose=True):
     if pop_size is None:
         pop_size = config.GP_POP_SIZE
     if generations is None:
@@ -287,7 +291,7 @@ def run_tsgp(model, X_train, y_train, X_test, y_test,
 
         # One batched decode for the whole population, rather than pop_size
         # independent autoregressive loops. step_k = 1 is the paper's operator.
-        target = (step_target(gen, generations, y_train)
+        target = (step_target(gen, generations, y_train, frac_start, frac_end)
                   if (step_anneal and step_k > 1) else None)
         child_trees = sample_with_step_control(search_op, selected, step_k,
                                                toolbox, X_train, target=target)

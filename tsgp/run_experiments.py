@@ -27,7 +27,8 @@ from .experiment_units import (METHODS, RESULTS_DIR, is_done, iter_units,
 def run_all_experiments(model_weights_path, output_dir=RESULTS_DIR,
                         num_runs=None, datasets=None, methods=None,
                         force=False, temperature=None, normalize_sd=None,
-                        step_k=None, step_anneal=None, verbose=True):
+                        step_k=None, step_anneal=None, frac_start=None,
+                        frac_end=None, verbose=True):
     if num_runs is None:
         num_runs = config.NUM_RUNS
     if datasets is None:
@@ -77,6 +78,7 @@ def run_all_experiments(model_weights_path, output_dir=RESULTS_DIR,
             payload = run_unit(dataset, method, run, model=model,
                                output_dir=output_dir, temperature=temperature,
                                step_k=step_k, step_anneal=step_anneal,
+                               frac_start=frac_start, frac_end=frac_end,
                                verbose=verbose)
             print(f"-> test_rmse={payload['test_rmse']:.4f} "
                   f"size={payload['best_size']} "
@@ -140,6 +142,16 @@ def main():
                              "free from crossover (28 -> 1.0 on ESL) and "
                              "which TSGP lacks. Sect. 5 future work, not the "
                              "paper's operator.")
+    parser.add_argument("--step-frac-start", type=float, default=None,
+                        help=f"Target parent-offspring distance at generation "
+                             f"0, as a multiple of ||y_train|| (default "
+                             f"{config.TSGP_STEP_FRAC_START}).")
+    parser.add_argument("--step-frac-end", type=float, default=None,
+                        help=f"Target at the final generation, same units "
+                             f"(default {config.TSGP_STEP_FRAC_END}). Setting "
+                             f"it equal to --step-frac-start gives a constant "
+                             f"target, the control that separates 'annealing "
+                             f"helps' from 'targeting any distance helps'.")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -152,6 +164,8 @@ def main():
                         normalize_sd=True if args.sd_normalize else None,
                         step_k=args.step_k,
                         step_anneal=True if args.step_anneal else None,
+                        frac_start=args.step_frac_start,
+                        frac_end=args.step_frac_end,
                         verbose=not args.quiet)
     return 0
 

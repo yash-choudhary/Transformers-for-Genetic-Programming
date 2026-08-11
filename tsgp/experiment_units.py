@@ -132,7 +132,8 @@ def load_model(weights_path, normalize_sd=None, sd_encoding=None):
 
 
 def run_unit(dataset, method, run, model=None, output_dir=RESULTS_DIR,
-             temperature=None, step_k=None, step_anneal=None, verbose=True):
+             temperature=None, step_k=None, step_anneal=None,
+             frac_start=None, frac_end=None, verbose=True):
     """Execute one unit and persist its result. Returns the payload."""
     from .tsgp_search import run_tsgp, run_stdgp_baseline
 
@@ -153,7 +154,9 @@ def run_unit(dataset, method, run, model=None, output_dir=RESULTS_DIR,
     if method == "tsgp":
         best_ind, stats = run_tsgp(model, X_train, y_train, X_test, y_test,
                                    temperature=temperature, step_k=step_k,
-                                   step_anneal=step_anneal, verbose=verbose)
+                                   step_anneal=step_anneal,
+                                   frac_start=frac_start, frac_end=frac_end,
+                                   verbose=verbose)
     else:
         best_ind, stats = run_stdgp_baseline(X_train, y_train, X_test, y_test,
                                              verbose=verbose)
@@ -191,6 +194,14 @@ def run_unit(dataset, method, run, model=None, output_dir=RESULTS_DIR,
         "step_anneal": (None if method == "stdgp" else
                         bool(config.TSGP_STEP_ANNEAL if step_anneal is None
                              else step_anneal)),
+        # The schedule is a free parameter of the extension, so record it --
+        # a sweep over it must never leave a results directory ambiguous.
+        "frac_start": (None if method == "stdgp" else
+                       (config.TSGP_STEP_FRAC_START if frac_start is None
+                        else frac_start)),
+        "frac_end": (None if method == "stdgp" else
+                     (config.TSGP_STEP_FRAC_END if frac_end is None
+                      else frac_end)),
     }
     _write_atomic(unit_path(dataset, method, run, output_dir), payload)
     return payload
