@@ -57,6 +57,49 @@ diagnosis and shows the paper's own §5 future work is *necessary* rather than
 optional. **Caveat that must be stated: k=8 spends 8× the model evaluations per
 generation, so this is not an equal-budget comparison against stdGP.**
 
+### Step-control sweep — `results_sweep/` (COMPLETE, ESL, 6 arms × 10 runs)
+
+| arm | config | median | size | vs k=1 p | min/run |
+|---|---|---|---|---|---|
+| `k1` | paper's operator | 0.4917 | 17 | — | 0.9 |
+| `a` | k=8, 2.0→0.10 | 0.4364 | 25 | 0.16 | 4.7 |
+| `b` | k=8, 1.0→0.02 | **0.4006** | 23 | **0.0039** | 3.9 |
+| `c` | k=8, 4.0→0.05 | 0.4069 | 31 | 0.027 | 4.2 |
+| `d` | k=16, 2.0→0.10 | 0.4028 | 25 | 0.0059 | 8.6 |
+| `e` | k=8, **constant 0.30** | 0.4179 | **35** | 0.065 | 4.5 |
+
+Three conclusions:
+
+1. **Annealing is NOT the active ingredient.** Arm `b` (annealed) vs arm `e`
+   (constant target), paired: diff −0.017, 6/10, **p = 0.49**. The earlier claim
+   that step-size *annealing* fixes TSGP is unsupported. What is supported is
+   that **selecting offspring at a targeted small semantic distance from among
+   k candidates** helps. Simpler claim, one fewer free parameter. Caveat: this
+   control is n=10 on one data set.
+2. **Doubling k is redundant with tuning the target** — arm `d` (k=16) matches
+   arm `b` (k=8) at 2.2× the cost. So a KV cache to afford larger k is **not**
+   worth building.
+3. **The schedule tuning did not transfer.** On ERA the tuned config `b` is
+   nominally *worse* than the original `a` (0.8253 vs 0.8197, p = 0.12). The
+   ESL gain looks like fitting n=10 noise — which agrees with conclusion 1.
+
+### Tuned grid — `results_anneal_b/` (IN PROGRESS, 72/150 when saved)
+
+k=8, 1.0→0.02. ERA complete at n=30: 0.8253, significantly better than k=1
+(p = 0.0002), statistical parity with stdGP (p = 0.34), size 17.
+
+### Protected division is a liability, not an asset
+
+TSGP almost never emits `protdiv` (0.7% of training-target tokens; used in
+0–17% of its best solutions against stdGP's 33–53%). That looked like a
+handicap worth fixing via pool regeneration — but removing division from
+stdGP's primitive set makes stdGP **better** on 4/5 data sets (ESL −0.026,
+Galaxy −0.033, LEV −0.027, pollen −0.039; ERA +0.005). So the missing operator
+is an advantage TSGP is already getting, and the pool-regeneration lead is dead
+as motivated by this. Note for the write-up: a stdGP without division reaches
+0.4172 on ESL and 0.3068 on Galaxy, beating both the paper's stdGP and our
+annealed TSGP — TSGP's parity is partly against a baseline the paper handicapped.
+
 ## What the v1–v6 report got wrong
 
 Measured with a control condition the earlier diagnostics lacked:
@@ -127,14 +170,32 @@ versions.
 ## To resume
 
 ```
-# annealed grid — resumable, skips completed units
+# tuned step-control grid -- 78 of 150 units still to run. Resumable: completed
+# units are skipped, so just re-run this until it prints 150/150.
 gpu_python.cmd -m tsgp.run_experiments --weights checkpoints_adamw/tsgp_final.npy \
-    --methods tsgp --step-k 8 --step-anneal --output results_anneal --quiet
+    --methods tsgp --step-k 8 --step-anneal \
+    --step-frac-start 1.0 --step-frac-end 0.02 \
+    --output results_anneal_b --quiet
+```
 
+~4.1 min/unit, so roughly 5.5 h remaining.
+
+```
 # results
-python -m tsgp.aggregate_results --output results_anneal
+python -m tsgp.aggregate_results --output results_anneal_b
 python -m tsgp.aggregate_results --output results_v7 \
     --compare-with results --label-a fixed-split --label-b per-run-split
+python sweep_step_control.py --dataset 1027_ESL --runs 10   # re-analyses the sweep
+```
+
+Optional, if the constant-target claim needs to hold across all five data sets
+rather than just ESL (~11 h):
+
+```
+gpu_python.cmd -m tsgp.run_experiments --weights checkpoints_adamw/tsgp_final.npy \
+    --methods tsgp --step-k 8 --step-anneal \
+    --step-frac-start 0.30 --step-frac-end 0.30 \
+    --output results_const --quiet
 ```
 
 ## Open items for the write-up
