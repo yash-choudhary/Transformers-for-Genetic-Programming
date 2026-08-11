@@ -28,14 +28,34 @@ ahead).
 
 Median best-solution size — TSGP 15/23/21/16/24 against the paper's 72/73/64/69/58.
 
-### Annealed step control — `results_anneal/` (IN PROGRESS, 20/150 when saved)
+### Annealed step control — `results_anneal/` (COMPLETE, 150 units)
 
-ESL pilot, n=10, paired on identical seeds against k=1:
-median 0.4917 → **0.4364**, better on 7/10 seeds, size 17 → 25.
-Nominally beats stdGP (0.4531) — the paper's direction — but **p = 0.16**
-paired and **p = 0.30** vs stdGP, i.e. not significant.
-ERA at n=13 showed **no effect** (0.8433 vs 0.8442), so the ESL gain may be
-dataset-specific.
+k=8, target decaying 2.0 → 0.1 × ‖y_train‖, selecting |d − target|.
+Paired against k=1 on identical seeds, n=30 — **significantly better on all
+five data sets**:
+
+| Dataset | k=1 | annealed | better on | p |
+|---|---|---|---|---|
+| ERA | 0.8442 | 0.8197 | 25/30 | <1e−4 |
+| ESL | 0.4748 | 0.4333 | 25/30 | 2e−4 |
+| Galaxy | 0.3501 | 0.3324 | 20/30 | 0.021 |
+| LEV | 0.7540 | 0.7276 | 22/30 | 0.0013 |
+| pollen | 0.6324 | 0.5804 | 25/30 | 1e−4 |
+
+The gap to the published values roughly halves: Δ +0.047/+0.096/+0.023/+0.082/
++0.114 → **+0.023/+0.054/+0.005/+0.056/+0.062**.
+
+**But TSGP still does not beat stdGP.** Against the stdGP baseline it reaches
+statistical parity on ERA (p=0.24), ESL (p=0.17) and Galaxy (p=0.42) and stays
+significantly behind on LEV (p=0.025) and pollen (p=0.024) — i.e. it moves from
+significantly worse on three data sets to indistinguishable on three. Nominal
+direction agreement 1/5 → 2/5. Sizes grow only 15–24 → 14–28, still far from
+the paper's 58–73.
+
+This is the study's main positive contribution: it confirms the step-size
+diagnosis and shows the paper's own §5 future work is *necessary* rather than
+optional. **Caveat that must be stated: k=8 spends 8× the model evaluations per
+generation, so this is not an equal-budget comparison against stdGP.**
 
 ## What the v1–v6 report got wrong
 
