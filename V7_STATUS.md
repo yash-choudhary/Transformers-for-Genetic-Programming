@@ -5,10 +5,17 @@ Branch: `v7-search-dynamics`. Everything below was produced on 2026-08-10.
 ## TL;DR
 
 The v1–v6 diagnosis does not survive controlled re-measurement. The operator is
-**not** broken. The replication still fails, but for a different, measured
-reason: the operator's semantic step has a **floor of ~0.7** while the paper
-requests `SD_d = 0.1`, and unlike stdGP it **never anneals**, so the search has
-no exploitation phase and freezes around generation 10.
+**not** broken. The paper's own operator (k=1) still does not replicate — it
+loses to stdGP on 4/5 data sets — but the reason is now measured: the operator's
+semantic step has a **floor of ~0.7** while the paper requests `SD_d = 0.1`, so
+the requested step was never honoured, and the search gets no exploitation
+phase and freezes around generation 10.
+
+Adding **targeted step selection** (draw k=8 offspring, keep the one nearest a
+target distance) fixes most of the gap: TSGP then reproduces the paper's
+direction on **3/5** data sets and beats the paper's own figure on Galaxy. That
+is an extension of the method — the paper's §5 future work — not a reproduction
+of it, and it spends 8× the model evaluations per generation.
 
 ## Results
 
@@ -83,10 +90,28 @@ Three conclusions:
    nominally *worse* than the original `a` (0.8253 vs 0.8197, p = 0.12). The
    ESL gain looks like fitting n=10 noise — which agrees with conclusion 1.
 
-### Tuned grid — `results_anneal_b/` (IN PROGRESS, 72/150 when saved)
+### Tuned grid — `results_anneal_b/` (COMPLETE, 150 units) — BEST RESULT
 
-k=8, 1.0→0.02. ERA complete at n=30: 0.8253, significantly better than k=1
-(p = 0.0002), statistical parity with stdGP (p = 0.34), size 17.
+k=8, target 1.0 → 0.02. Significantly better than the paper's k=1 operator on
+**all five** data sets (p ≤ 0.0002).
+
+| Dataset | TSGP tuned | stdGP | vs stdGP | paper TSGP | Δ | winner | paper |
+|---|---|---|---|---|---|---|---|
+| ERA | 0.8253 | 0.8070 | p=0.34 | 0.797 | +0.028 | n.s. | TSGP |
+| ESL | **0.4084** | 0.4531 | **p=0.011** | 0.379 | +0.029 | **TSGP** | TSGP ✓ |
+| Galaxy | **0.3023** | 0.3322 | **p=0.012** | 0.327 | **−0.025** | **TSGP** | TSGP ✓ |
+| LEV | 0.7198 | 0.6930 | p=0.135 | 0.672 | +0.048 | n.s. | TSGP |
+| pollen | 0.5824 | 0.5075 | p=0.026 | 0.518 | +0.064 | stdGP | stdGP ✓ |
+
+**Direction agrees with the paper on 3/5** (up from 1/5 at k=1); parity or
+better on 4/5; on Galaxy it beats the paper's own TSGP figure.
+
+The schedule tuning transferred to ESL (p=0.005), Galaxy (p=0.013) and LEV
+(p=0.022) but not ERA (p=0.12) or pollen (p=0.82). An earlier "the tuning did
+not transfer" call was made from ERA alone and was wrong.
+
+**Solution size is still 17–25 against the paper's 58–73 and has not moved
+under any intervention. This remains the one unexplained symptom.**
 
 ### Protected division is a liability, not an asset
 
