@@ -14,8 +14,8 @@ import time
 import numpy as np
 
 from tsgp import config
-from tsgp.classification import (CLF_DATASETS, DISPLAY_NAMES,
-                                 N_SOURCE_FEATURES,
+from tsgp.classification import (DISPLAY_NAMES, N_SOURCE_FEATURES,
+                                 default_datasets,
                                  load_classification_dataset,
                                  majority_baseline, run_stdgp_classify,
                                  run_tsgp_classify)
@@ -24,7 +24,7 @@ from tsgp.experiment_units import unit_seed, set_seeds, load_model
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--datasets", nargs="+", default=CLF_DATASETS)
+    p.add_argument("--datasets", nargs="+", default=None)
     p.add_argument("--runs", type=int, default=5)
     p.add_argument("--generations", type=int, default=None)
     p.add_argument("--weights", default="checkpoints_adamw/tsgp_final.npy")
@@ -35,6 +35,10 @@ def main():
     p.add_argument("--step-frac-end", type=float, default=0.02)
     p.add_argument("--out", default="results_classification")
     args = p.parse_args()
+    if args.datasets is None:
+        args.datasets = default_datasets()
+    print(f"NUM_FEATURES = {config.NUM_FEATURES}   datasets: "
+          f"{', '.join(args.datasets)}", flush=True)
 
     methods = args.methods.split(",")
     os.makedirs(os.path.join(args.out, "runs"), exist_ok=True)

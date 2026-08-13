@@ -48,23 +48,39 @@ from .tsgp_search import (TSGPSearchOperator, sample_with_step_control,
 # is discarded, and the majority-class baseline is reported for every result.
 # A dataset where TSGP and stdGP both sit at the majority baseline tells us
 # nothing about the operator.
-CLF_DATASETS = [
+CLF_DATASETS_D4 = [
     "irish",       # 500 samples,  5 features -> drop 1, balanced
-    "phoneme",     # 5404 samples, 5 features -> drop 1, 17% imbalance
     "diabetes",    # 768 samples,  8 features -> first 4, 9% imbalance
     "breast_w",    # 699 samples,  9 features -> first 4, 10% imbalance
 ]
 
-DISPLAY_NAMES = {
-    "irish": "irish",
-    "phoneme": "phoneme",
-    "diabetes": "diabetes",
-    "breast_w": "breast_w",
+# At d=8 the point is to stop discarding features, so these are all >= 8 wide.
+# diabetes is an exact fit; the rest lose one feature except australian.
+# diabetes and breast_w appear in both lists so the d=4 and d=8 operators can
+# be compared on common ground.
+CLF_DATASETS_D8 = [
+    "diabetes",    # 768 samples,  8 features -> exact fit
+    "breast_w",    # 699 samples,  9 features -> first 8
+    "threeOf9",    # 512 samples,  9 features -> first 8
+    "xd6",         # 973 samples,  9 features -> first 8
+    "australian",  # 690 samples, 14 features -> first 8
+]
+
+N_SOURCE_FEATURES = {
+    "irish": 5, "phoneme": 5, "diabetes": 8, "breast_w": 9,
+    "threeOf9": 9, "xd6": 9, "australian": 14, "magic": 10,
 }
 
-# How many features each source problem really has, so the discarded count can
-# be reported rather than quietly ignored.
-N_SOURCE_FEATURES = {"irish": 5, "phoneme": 5, "diabetes": 8, "breast_w": 9}
+
+def default_datasets():
+    """Benchmark list matching the operator's dimensionality."""
+    return CLF_DATASETS_D8 if config.NUM_FEATURES >= 8 else CLF_DATASETS_D4
+
+
+# Kept for backwards compatibility with the d=4 prototype runs.
+CLF_DATASETS = CLF_DATASETS_D4
+
+DISPLAY_NAMES = {n: n for n in set(CLF_DATASETS_D4) | set(CLF_DATASETS_D8)}
 
 
 def load_classification_dataset(name, cache_dir=PMLB_CACHE_DIR, split_seed=42):
@@ -77,7 +93,16 @@ def load_classification_dataset(name, cache_dir=PMLB_CACHE_DIR, split_seed=42):
     fraction of ||y_train|| -- on the same footing as in the regression runs.
     """
     X, y = fetch_dataset(name, cache_dir=cache_dir)
-    X = X[:, :config.NUM_FEATURES]
+    # The operator's terminal set is exactly x0..x{d-1}, so the matrix has to
+    # be exactly that wide: truncate wider problems, and zero-pad narrower ones
+    # so the unused variables exist but carry no signal. Padding is recorded in
+    # N_SOURCE_FEATURES so a result can never hide how much was discarded or
+    # invented.
+    d = config.NUM_FEATURES
+    if X.shape[1] >= d:
+        X = X[:, :d]
+    else:
+        X = np.hstack([X, np.zeros((X.shape[0], d - X.shape[1]))])
 
     classes = np.unique(y)
     if len(classes) != 2:
