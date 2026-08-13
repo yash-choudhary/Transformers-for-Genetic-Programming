@@ -1,4 +1,19 @@
-NUM_FEATURES = 4
+import os
+
+# Dimensionality of the problems the operator can represent. This fixes the
+# terminal set (x0..x{d-1}) and therefore the tokeniser vocabulary, so a trained
+# checkpoint is only valid for the value it was trained under.
+#
+# The regression replication uses 4, matching the paper. The classification
+# extension uses 8, because PMLB has essentially no 4-feature binary
+# classification data -- exactly two sets, of 264 samples at 73% imbalance and
+# 50 samples -- so a 4-feature operator forces discarding most of the features
+# of every usable benchmark. Eight covers diabetes/pima exactly and loses one or
+# two features on breast_w and magic.
+#
+# Overridden per-process rather than edited, so a d=4 run already in flight is
+# unaffected by preparing a d=8 one:  set TSGP_NUM_FEATURES=8
+NUM_FEATURES = int(os.environ.get("TSGP_NUM_FEATURES", "4"))
 
 PRIMITIVE_SET_FUNCTIONS = ["add", "sub", "mul", "protdiv"]
 TERMINAL_VARIABLES = [f"x{i}" for i in range(NUM_FEATURES)]

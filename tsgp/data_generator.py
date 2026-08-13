@@ -168,6 +168,51 @@ def find_semantic_pairs(functions, semantics, valid_indices, k=None,
     return pairs
 
 
+def coverage_by_norm(semantics, k=None, sd_max_values=(100.0, 250.0, 1000.0)):
+    """What fraction of the pool gets a training pair, broken down by norm.
+
+    Global coverage is the wrong number to act on. A pool can look badly
+    uncovered while every function the search actually visits is fine, because
+    the uncovered tail is degenerate blow-ups from protected division that no
+    search would ever select. What matters is coverage over the norm range the
+    real search operates in -- measured at 20-75 for classification.
+    """
+    k = k or config.KNN_K
+    n, dim = semantics.shape
+    index = faiss.IndexFlatL2(dim)
+    index.add(semantics)
+    distances, indices = index.search(semantics, k + 1)
+
+    norms = np.linalg.norm(semantics, axis=1)
+    # nearest non-self neighbour distance for each function
+    nn = np.full(n, np.inf)
+    for i in range(n):
+        for j_pos in range(k + 1):
+            j = indices[i, j_pos]
+            if j == i or j < 0:
+                continue
+            d = np.sqrt(max(distances[i, j_pos], 0.0))
+            if d > 0:
+                nn[i] = min(nn[i], d)
+                break
+
+    buckets = [(0, 10), (10, 25), (25, 50), (50, 100), (100, 250),
+               (250, 1e9)]
+    lines = ["coverage by semantic norm (fraction with a neighbour inside "
+             "each SD threshold):",
+             f"  {'norm range':>14} {'n':>9} " +
+             " ".join(f"{'SD<' + str(int(s)):>9}" for s in sd_max_values)]
+    for lo, hi in buckets:
+        m = (norms >= lo) & (norms < hi)
+        if m.sum() == 0:
+            continue
+        cells = " ".join(f"{np.mean(nn[m] < s):>9.3f}" for s in sd_max_values)
+        lines.append(f"  {f'{lo}-{hi:g}':>14} {m.sum():>9,} {cells}")
+    text = "\n".join(lines)
+    print(text)
+    return text
+
+
 def report_pool_coverage(semantics, valid_indices, out_path=None):
     """Describe the semantic regime the pool actually covers.
 
