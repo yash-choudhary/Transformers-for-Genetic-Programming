@@ -148,7 +148,7 @@ def find_semantic_pairs(functions, semantics, valid_indices, k=None,
             j = indices[i, j_pos]
             if j == i or j < 0:
                 continue
-            sd = np.sqrt(max(distances[i, j_pos], 0.0))
+            sd = float(np.sqrt(max(distances[i, j_pos], 0.0)))
             if sd > 0 and sd < sd_max:
                 pairs.append((valid_indices[i], valid_indices[j], sd))
                 kept_any = True
@@ -156,6 +156,7 @@ def find_semantic_pairs(functions, semantics, valid_indices, k=None,
             excluded_no_neighbour += 1
         if len(pairs) >= config.TARGET_NUM_PAIRS:
             break
+    del distances, indices, index
 
     # Coverage is the number that matters for whether the operator will work on
     # what the GP search actually feeds it: a function whose nearest neighbour
@@ -168,7 +169,8 @@ def find_semantic_pairs(functions, semantics, valid_indices, k=None,
     return pairs
 
 
-def coverage_by_norm(semantics, k=None, sd_max_values=(100.0, 250.0, 1000.0)):
+def coverage_by_norm(semantics, k=None, sd_max_values=(100.0, 250.0, 1000.0),
+                     max_probe=150_000, seed=0):
     """What fraction of the pool gets a training pair, broken down by norm.
 
     Global coverage is the wrong number to act on. A pool can look badly
@@ -178,36 +180,53 @@ def coverage_by_norm(semantics, k=None, sd_max_values=(100.0, 250.0, 1000.0)):
     real search operates in -- measured at 20-75 for classification.
     """
     k = k or config.KNN_K
-    n, dim = semantics.shape
+    n_all, dim = semantics.shape
+
+    # This is a diagnostic, so it queries a random subsample against the full
+    # index rather than every function against every function. An exact
+    # IndexFlatL2 over the whole pool is O(n^2): fine for the 61k pilot,
+    # ~6e14 operations at 2.5M, which is what stalled the first full run and
+    # left it short of memory for the pairing step that follows.
+    rng = np.random.default_rng(seed)
+    probe = (rng.choice(n_all, max_probe, replace=False)
+             if n_all > max_probe else np.arange(n_all))
+    queries = np.ascontiguousarray(semantics[probe])
+
     index = faiss.IndexFlatL2(dim)
     index.add(semantics)
-    distances, indices = index.search(semantics, k + 1)
+    distances, indices = index.search(queries, k + 1)
 
-    norms = np.linalg.norm(semantics, axis=1)
-    # nearest non-self neighbour distance for each function
-    nn = np.full(n, np.inf)
-    for i in range(n):
+    norms = np.linalg.norm(queries, axis=1)
+    nn = np.full(len(probe), np.inf)
+    for i in range(len(probe)):
         for j_pos in range(k + 1):
             j = indices[i, j_pos]
-            if j == i or j < 0:
+            if j == probe[i] or j < 0:
                 continue
             d = np.sqrt(max(distances[i, j_pos], 0.0))
             if d > 0:
                 nn[i] = min(nn[i], d)
                 break
+    scale = n_all / len(probe)
 
     buckets = [(0, 10), (10, 25), (25, 50), (50, 100), (100, 250),
                (250, 1e9)]
-    lines = ["coverage by semantic norm (fraction with a neighbour inside "
-             "each SD threshold):",
-             f"  {'norm range':>14} {'n':>9} " +
+    lines = [f"coverage by semantic norm "
+             f"(probe of {len(probe):,} of {n_all:,} pool functions):",
+             f"  {'norm range':>14} {'n(est)':>11} {'paired(est)':>12} " +
              " ".join(f"{'SD<' + str(int(s)):>9}" for s in sd_max_values)]
     for lo, hi in buckets:
         m = (norms >= lo) & (norms < hi)
         if m.sum() == 0:
             continue
         cells = " ".join(f"{np.mean(nn[m] < s):>9.3f}" for s in sd_max_values)
-        lines.append(f"  {f'{lo}-{hi:g}':>14} {m.sum():>9,} {cells}")
+        n_est = int(m.sum() * scale)
+        # The absolute count is what decides whether the operator has enough
+        # training signal in a regime; the fraction alone can look alarming
+        # while a million functions are still covered.
+        paired = int(m.sum() * np.mean(nn[m] < sd_max_values[0]) * scale)
+        lines.append(f"  {f'{lo}-{hi:g}':>14} {n_est:>11,} {paired:>12,} "
+                     f"{cells}")
     text = "\n".join(lines)
     print(text)
     return text

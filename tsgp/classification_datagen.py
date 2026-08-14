@@ -125,9 +125,22 @@ def run_stdgp_for_functions(X, y, pop_size=None, generations=None,
     return list(unique.values()), pset
 
 
-def generate(output_dir, num_problems=None, sd_max=None, verbose=True):
+def build_pool(output_dir, num_problems=None, verbose=True):
+    """Phase one: run the GP searches and persist the pool.
+
+    Split out and checkpointed on purpose. The first full run spent five hours
+    on the GP searches, then died during pairing, and every one of those hours
+    was lost because nothing was written until the very end -- the same failure
+    the regression study hit and fixed with per-unit checkpointing. The pool is
+    now saved as soon as it exists, so a later failure costs only the cheap
+    step.
+
+    Trees are dropped once their tokens and semantics are computed: 2.5M DEAP
+    PrimitiveTree objects are several GB that nothing downstream needs.
+    """
     num_problems = num_problems or config.NUM_SYNTHETIC_PROBLEMS
     os.makedirs(output_dir, exist_ok=True)
+    pool_path = os.path.join(output_dir, "pool.pkl")
     rng = np.random.default_rng(0)
 
     functions, token_seqs, pset = [], [], None
@@ -151,8 +164,29 @@ def generate(output_dir, num_problems=None, sd_max=None, verbose=True):
         print(f"\npool: {len(functions):,} functions. Computing semantics ...",
               flush=True)
     semantics, valid = compute_all_semantics(functions, pset)
+    del functions
     if verbose:
-        print(f"finite semantics: {len(valid):,}")
+        print(f"finite semantics: {len(valid):,}. Saving pool ...", flush=True)
+
+    with open(pool_path, "wb") as f:
+        pickle.dump({"token_seqs": token_seqs, "valid": valid}, f, protocol=4)
+    np.save(os.path.join(output_dir, "pool_semantics.npy"), semantics)
+    if verbose:
+        print(f"pool checkpointed to {pool_path}")
+    return token_seqs, semantics, valid
+
+
+def load_pool(output_dir):
+    with open(os.path.join(output_dir, "pool.pkl"), "rb") as f:
+        d = pickle.load(f)
+    semantics = np.load(os.path.join(output_dir, "pool_semantics.npy"))
+    return d["token_seqs"], semantics, d["valid"]
+
+
+def make_pairs(output_dir, token_seqs, semantics, valid, sd_max=None,
+               verbose=True):
+    """Phase two: report coverage, then form and persist the training pairs."""
+    if verbose:
         report_pool_coverage(semantics, valid,
                              os.path.join(output_dir, "pool_coverage.txt"))
         print()
@@ -160,7 +194,7 @@ def generate(output_dir, num_problems=None, sd_max=None, verbose=True):
         with open(os.path.join(output_dir, "pool_coverage.txt"), "a") as f:
             f.write("\n\n" + cov + "\n")
 
-    pairs = find_semantic_pairs(functions, semantics, valid, sd_max=sd_max)
+    pairs = find_semantic_pairs(None, semantics, valid, sd_max=sd_max)
 
     data = [{"input_tokens": token_seqs[i],
              "output_tokens": token_seqs[j],
@@ -179,6 +213,19 @@ def generate(output_dir, num_problems=None, sd_max=None, verbose=True):
     if verbose:
         print(f"\nwrote {len(data):,} pairs to {pkl}")
     return data
+
+
+def generate(output_dir, num_problems=None, sd_max=None, verbose=True):
+    """Full generation, resuming from the pool checkpoint if one exists."""
+    if os.path.exists(os.path.join(output_dir, "pool.pkl")):
+        if verbose:
+            print("pool checkpoint found - skipping generation", flush=True)
+        token_seqs, semantics, valid = load_pool(output_dir)
+    else:
+        token_seqs, semantics, valid = build_pool(
+            output_dir, num_problems=num_problems, verbose=verbose)
+    return make_pairs(output_dir, token_seqs, semantics, valid,
+                      sd_max=sd_max, verbose=verbose)
 
 
 if __name__ == "__main__":
