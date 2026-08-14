@@ -48,6 +48,35 @@ from .tsgp_search import (TSGPSearchOperator, sample_with_step_control,
 # is discarded, and the majority-class baseline is reported for every result.
 # A dataset where TSGP and stdGP both sit at the majority baseline tells us
 # nothing about the operator.
+# --- the benchmark set, and why it is constructed rather than taken off the
+# --- shelf -----------------------------------------------------------------
+#
+# PMLB contains exactly two 4-feature binary classification sets and neither is
+# usable: analcatdata_lawsuit (264 samples at 73% imbalance) and
+# analcatdata_aids (50 samples). Widening the operator to 8 features was the
+# obvious answer, but the only wide sets available locally have 20 to 168
+# features, where taking "the first eight" is arbitrary feature selection --
+# GAMETES is constructed so that only two specific attributes carry signal, and
+# Hill_Valley and clean are shape and molecular data whose leading columns mean
+# nothing on their own. Results from those would sit at the majority baseline
+# and say nothing about the operator.
+#
+# Instead the five regression benchmarks are converted into binary problems by
+# splitting the target at its training-set median. This is a construction and
+# must be described as one, but it is a good one for this study: the features
+# are the same real-world features, every problem is exactly 4-dimensional so
+# nothing is discarded, the classes are balanced by construction, and -- most
+# usefully -- the classification and regression results are then measured on
+# identical data, so the operator's behaviour can be compared across the two
+# tasks directly rather than across different benchmarks.
+CLF_DATASETS_MEDIAN = [
+    "1030_ERA",
+    "1027_ESL",
+    "690_visualizing_galaxy",
+    "1029_LEV",
+    "529_pollen",
+]
+
 CLF_DATASETS_D4 = [
     "irish",       # 500 samples,  5 features -> drop 1, balanced
     "diabetes",    # 768 samples,  8 features -> first 4, 9% imbalance
@@ -74,13 +103,30 @@ N_SOURCE_FEATURES = {
 
 def default_datasets():
     """Benchmark list matching the operator's dimensionality."""
-    return CLF_DATASETS_D8 if config.NUM_FEATURES >= 8 else CLF_DATASETS_D4
+    if config.NUM_FEATURES >= 8:
+        return CLF_DATASETS_D8
+    return CLF_DATASETS_MEDIAN
 
 
 # Kept for backwards compatibility with the d=4 prototype runs.
 CLF_DATASETS = CLF_DATASETS_D4
 
 DISPLAY_NAMES = {n: n for n in set(CLF_DATASETS_D4) | set(CLF_DATASETS_D8)}
+
+
+def _balanced_threshold(y):
+    """The cut point among observed values giving the most even split.
+
+    With a continuous target this lands on the median. With a discrete ordinal
+    one -- which all five of these are -- it picks whichever observed value
+    splits closest to 50/50, which the median need not do when a large share of
+    the mass sits on a single value.
+    """
+    candidates = np.unique(y)[:-1]          # a cut above the max splits nothing
+    if len(candidates) == 0:
+        return float(np.median(y))
+    fracs = np.array([np.mean(y > c) for c in candidates])
+    return float(candidates[np.argmin(np.abs(fracs - 0.5))])
 
 
 def load_classification_dataset(name, cache_dir=PMLB_CACHE_DIR, split_seed=42):
@@ -105,6 +151,27 @@ def load_classification_dataset(name, cache_dir=PMLB_CACHE_DIR, split_seed=42):
         X = np.hstack([X, np.zeros((X.shape[0], d - X.shape[1]))])
 
     classes = np.unique(y)
+    if name in CLF_DATASETS_MEDIAN or len(classes) > 2:
+        # Continuous or many-valued target: threshold it into a binary problem.
+        #
+        # A plain median split is not good enough here. These targets are
+        # discrete ordinal ratings with heavy ties at the median, so "> median"
+        # can land badly off balance -- on LEV it gives a 21/79 split, whose
+        # majority baseline of 0.79 would swamp any signal the search finds.
+        # The threshold is instead chosen from the observed values as the one
+        # that comes closest to an even split. It is selected on the training
+        # half only, so nothing about the test half leaks into the task
+        # definition.
+        X_train, X_test, y_train_raw, y_test_raw = train_test_split(
+            X, y, test_size=0.5, random_state=split_seed)
+        thr = _balanced_threshold(y_train_raw)
+        y_train = np.where(y_train_raw > thr, 1.0, -1.0)
+        y_test = np.where(y_test_raw > thr, 1.0, -1.0)
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        return X_train, X_test, y_train, y_test
+
     if len(classes) != 2:
         raise ValueError(f"{name} has {len(classes)} classes; this prototype "
                          f"is binary only")
