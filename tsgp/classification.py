@@ -305,7 +305,11 @@ def run_tsgp_classify(model, X_train, y_train, X_test, y_test,
                    else step_anneal)
 
     pset, toolbox = _setup(X_train, y_train)
-    search_op = TSGPSearchOperator(model, pset)
+    # sd_desired is the classification pool's p25, not the paper's 0.1 -- see
+    # config.TSGP_SD_DESIRED_CLF. Passing 0.1 here would query the operator
+    # below the 1st percentile of anything it was trained on.
+    search_op = TSGPSearchOperator(model, pset,
+                                   sd_desired=config.TSGP_SD_DESIRED_CLF)
     if step_k > 1:
         search_op.batch_size = 400
 

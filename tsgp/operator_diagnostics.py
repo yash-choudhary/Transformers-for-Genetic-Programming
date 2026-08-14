@@ -42,9 +42,16 @@ from .syntax_control import SyntaxController, apply_syntax_mask
 from .tokenizer import (encode, decode, tree_to_tokens, tokens_to_tree,
                         SOS_ID, EOS_ID, PAD_ID, VOCAB_SIZE)
 
-# Reference values measured on the 5M-pair training set (see report v7).
+# Reference values measured on the training set the model was fitted to. These
+# are NOT universal: the regression pool sits at SD median 0.164, the
+# classification pool at 6.637, because SD is an absolute distance and
+# classification functions have far larger semantic norms. Reading an achieved
+# distance against the wrong reference makes a healthy operator look broken, so
+# pass the right pool's values when diagnosing a classification checkpoint.
 TRAIN_PAIR_SD_MEDIAN = 0.164
 TRAIN_TARGET_SIZE_MEDIAN = 35
+CLF_PAIR_SD_MEDIAN = 6.637
+CLF_TARGET_SIZE_MEDIAN = 29
 
 GATES = {
     "locality_pool": 0.30,      # offspring must be clearly nearer its own parent

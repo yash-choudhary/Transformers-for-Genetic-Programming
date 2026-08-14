@@ -110,6 +110,21 @@ TRANSFORMER_SD_BIN_MAX = 100.0       # matches SD_MAX_THRESHOLD
 
 TSGP_SD_DESIRED = 0.1
 
+# The classification operator is queried at a different point, and it has to be.
+# SD is an absolute Euclidean distance, so its scale follows the pool's semantic
+# norms -- and classification functions are far larger than regression ones
+# because logistic loss never pins their magnitude. Measured on the two pools:
+#
+#   regression pairs      SD  p1 0.001  p25 0.049  p50 0.164  p75 0.667
+#   classification pairs  SD  p1 0.200  p25 2.156  p50 6.637  p75 11.323
+#
+# The paper's SD_d = 0.1 sits at roughly the 40th percentile of the regression
+# pairs but *below the 1st percentile* of the classification pairs. Carrying it
+# over unchanged would query the operator at a distance it effectively never saw
+# in training. 2.0 is the classification pool's p25 -- the same "small but
+# represented" position 0.1 occupies for regression.
+TSGP_SD_DESIRED_CLF = 2.0
+
 # Semantic step control: sample this many offspring per parent and keep the one
 # semantically nearest the parent. 1 is the paper's operator exactly.
 #
