@@ -1,0 +1,106 @@
+{
+  "sd_encoding": "linear",
+  "sweep": {
+    "0.01": {
+      "ratio": 0.2754905516950001,
+      "d_own": 28.46547671548142,
+      "d_other": 103.32650807928975,
+      "offspring_size": 27.0,
+      "parent_norm": 71.1976698485577,
+      "n": 255
+    },
+    "0.1": {
+      "ratio": 0.24271125982319947,
+      "d_own": 28.38134486333789,
+      "d_other": 116.93460321540908,
+      "offspring_size": 30.0,
+      "parent_norm": 71.1976698485577,
+      "n": 256
+    },
+    "1.0": {
+      "ratio": 0.29374050877323654,
+      "d_own": 30.4973198037196,
+      "d_other": 103.82401777367075,
+      "offspring_size": 27.0,
+      "parent_norm": 71.1976698485577,
+      "n": 256
+    },
+    "10.0": {
+      "ratio": 0.2548860024615635,
+      "d_own": 30.960249644059385,
+      "d_other": 121.467045444083,
+      "offspring_size": 27.0,
+      "parent_norm": 71.1976698485577,
+      "n": 254
+    },
+    "50.0": {
+      "ratio": 0.45311483666551233,
+      "d_own": 53.25954207666077,
+      "d_other": 117.5409361313339,
+      "offspring_size": 19.0,
+      "parent_norm": 71.1976698485577,
+      "n": 253
+    }
+  },
+  "regime": {
+    "3-8": {
+      "ratio": 0.1728112019529269,
+      "d_own": 21.2666790113266,
+      "d_other": 123.06308139167716,
+      "offspring_size": 9.0,
+      "parent_norm": 21.780064995046885,
+      "n": 92
+    },
+    "9-14": {
+      "ratio": 0.43514341841506027,
+      "d_own": 62.82386479117745,
+      "d_other": 144.37507757787822,
+      "offspring_size": 9.0,
+      "parent_norm": 59.64808685209849,
+      "n": 95
+    },
+    "15-22": {
+      "ratio": 0.6359069913363165,
+      "d_own": 218.89692151493406,
+      "d_other": 344.2278894511549,
+      "offspring_size": 9.0,
+      "parent_norm": 244.38530542570103,
+      "n": 97
+    },
+    "23-34": {
+      "ratio": 0.717507934172695,
+      "d_own": 773.587641662919,
+      "d_other": 1078.1590067779325,
+      "offspring_size": 13.0,
+      "parent_norm": 797.8911711585758,
+      "n": 94
+    },
+    "35-60": {
+      "ratio": 0.7109808576324809,
+      "d_own": 366.9392725636965,
+      "d_other": 516.1028860686629,
+      "offspring_size": 11.0,
+      "parent_norm": 385.9748716463588,
+      "n": 24
+    }
+  },
+  "gates": {
+    "locality": {
+      "value": 0.24271125982319947,
+      "gate": 0.3,
+      "pass": true
+    },
+    "response": {
+      "value": 1.8710223127123915,
+      "gate": 3.0,
+      "pass": false
+    },
+    "regime": {
+      "value": 0.6359069913363165,
+      "gate": 0.6,
+      "pass": false
+    }
+  },
+  "all_pass": false,
+  "notes": "REGIME is the check the v1-v6 study never ran. The operator can score an excellent locality ratio on pool parents and still be near-random on the functions Ramped Half-and-Half produces at generation 0, whose semantic norms are 10-100x the pool's. With fully generational replacement, a search that starts there may never reach the regime where the operator works."
+}
