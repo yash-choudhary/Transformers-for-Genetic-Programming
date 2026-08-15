@@ -135,5 +135,7 @@ for ds in ORDER:
 
 print("'over maj' is the margin above always predicting the majority class.")
 print("An arm at or below zero has found nothing usable.")
-print("\nTSGP arms use step control (k=8), so they spend 8x the model")
-print("evaluations per generation -- not an equal-budget comparison with stdGP.")
+print("\nTSGP-k1 is the paper's operator at the SAME number of model evaluations")
+print("as stdGP -- an equal-budget comparison. TSGP-clf and TSGP-transfer use")
+print("step control (k=8) and so spend 8x the evaluations per generation; those")
+print("rows are not equal-budget and must not be reported as if they were.")
