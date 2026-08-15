@@ -114,6 +114,23 @@ CLF_DATASETS = CLF_DATASETS_D4
 DISPLAY_NAMES = {n: n for n in set(CLF_DATASETS_D4) | set(CLF_DATASETS_D8)}
 
 
+# How the continuous target is turned into classes. Set TSGP_CLF_TASK.
+#
+#   "median"  y above a balanced cut. Simple, but the resulting boundary is
+#             close to linear, and logistic regression with five coefficients
+#             matches TSGP on all five data sets. That makes it a poor test of
+#             whether a flexible symbolic operator is worth anything: there is
+#             no non-linearity for flexibility to exploit.
+#
+#   "middle"  y inside the central third. Not a linear function of the features
+#             even when y is, so a linear model cannot represent it -- measured,
+#             logistic regression's margin over the majority baseline collapses
+#             (ESL +0.369 -> +0.107) while a random forest holds up (+0.323).
+#             This is the benchmark on which structural flexibility can pay.
+import os as _os
+CLF_TASK = _os.environ.get("TSGP_CLF_TASK", "median")
+
+
 def _balanced_threshold(y):
     """The cut point among observed values giving the most even split.
 
@@ -164,9 +181,16 @@ def load_classification_dataset(name, cache_dir=PMLB_CACHE_DIR, split_seed=42):
         # definition.
         X_train, X_test, y_train_raw, y_test_raw = train_test_split(
             X, y, test_size=0.5, random_state=split_seed)
-        thr = _balanced_threshold(y_train_raw)
-        y_train = np.where(y_train_raw > thr, 1.0, -1.0)
-        y_test = np.where(y_test_raw > thr, 1.0, -1.0)
+        if CLF_TASK == "middle":
+            lo, hi = np.percentile(y_train_raw, [33, 67])
+            y_train = np.where((y_train_raw >= lo) & (y_train_raw <= hi),
+                               1.0, -1.0)
+            y_test = np.where((y_test_raw >= lo) & (y_test_raw <= hi),
+                              1.0, -1.0)
+        else:
+            thr = _balanced_threshold(y_train_raw)
+            y_train = np.where(y_train_raw > thr, 1.0, -1.0)
+            y_test = np.where(y_test_raw > thr, 1.0, -1.0)
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)

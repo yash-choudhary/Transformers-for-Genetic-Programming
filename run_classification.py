@@ -14,6 +14,7 @@ import time
 import numpy as np
 
 from tsgp import config
+from tsgp import classification
 from tsgp.classification import (DISPLAY_NAMES, N_SOURCE_FEATURES,
                                  default_datasets,
                                  load_classification_dataset,
@@ -74,6 +75,11 @@ def main():
                     "dataset": dataset, "method": method, "run": run,
                     "seed": seed,
                     "elapsed_sec": round(time.perf_counter() - t0, 1),
+                    # Which construction produced the labels. Recorded because
+                    # a summary that mixes the median-split and middle-band
+                    # tasks silently compares different problems and can report
+                    # a large spurious difference.
+                    "clf_task": classification.CLF_TASK,
                     "majority_baseline": majority_baseline(ytr, yte),
                     "n_source_features": N_SOURCE_FEATURES.get(dataset),
                     "step_k": args.step_k if method == "tsgp" else None,
