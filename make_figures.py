@@ -683,7 +683,178 @@ def semantic_distance():
     save(fig, "fig_semantic_distance")
 
 
+def gp_cycle():
+    """The evolutionary loop Chapter 2 describes, before any of it is replaced.
+
+    Drawn left to right with the generational return above it, so the one box
+    TSGP later swaps out -- variation -- sits in the flow where the reader
+    meets it again in Figure 3.1.
+    """
+    fig, ax = plt.subplots(figsize=(W_FULL, 2.35))
+    ax.axis("off")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    box, varrow, harrow = _boxer(fig, ax)
+    fs = BASE_SIZE - 2.5
+    y = 0.60
+    xs = [0.085, 0.295, 0.505, 0.715, 0.925]
+
+    b0 = box(xs[0], y, "initialise\npopulation", COL["third"], fs)
+    b1 = box(xs[1], y, "evaluate\nfitness", COL["tsgp"], fs)
+    b2 = box(xs[2], y, "select\nparents", COL["tsgp"], fs)
+    # the variation box is the one the method under study replaces
+    b3 = box(xs[3], y, "crossover\nand mutation", COL["std"], fs)
+    b4 = box(xs[4], y, "new\npopulation", COL["third"], fs)
+
+    for a, b in ((b0, b1), (b1, b2), (b2, b3), (b3, b4)):
+        harrow(a["r"], b["l"], y)
+
+    # the generational return, curved over the row rather than through it
+    # rad is kept shallow enough that the apex stays inside the axes: a taller
+    # arc is trimmed flat by the tight bounding box, which reads as a drawing
+    # error rather than a curve
+    ax.annotate("", xy=(b1["cx"], b1["t"] + 0.01),
+                xytext=(b4["cx"], b4["t"] + 0.01),
+                arrowprops=dict(arrowstyle="->", lw=0.9, color=COL["extra"],
+                                connectionstyle="arc3,rad=0.25"))
+    # the label sits at the apex, on an opaque patch, so the arc reads as
+    # passing behind it rather than through the words
+    ax.text(0.505, 0.905, "repeat for each generation", ha="center",
+            va="center", fontsize=fs, color=COL["extra"], style="italic",
+            zorder=4, bbox=dict(facecolor="white", edgecolor="none", pad=2.0))
+
+    varrow(b1["cx"], b1["b"] - 0.01, 0.20)
+    box(b1["cx"], 0.125, "return the best solution", COL["third"], fs)
+    ax.text(b1["cx"] + 0.018, 0.245, "at the generation limit", ha="left",
+            va="center", fontsize=fs, color=COL["note"])
+    save(fig, "fig_gp_cycle")
+
+
+def _expr_tree(ax, tree, left, top, dx=1.0, dy=1.0, hi=(), r=0.30,
+               fs=BASE_SIZE - 3.5):
+    """Draw an expression tree, returning its root position and right edge.
+
+    `tree` is a nested list, [label, child, child] or [label]; lists rather
+    than tuples so that a subtree has its own identity and `hi`, the subtrees
+    to highlight, can be given as the objects themselves rather than by a path
+    that would have to be kept in step with the structure.
+
+    Leaves are laid out left to right one `dx` apart and every parent is
+    centred over its children, which is what keeps the two offspring trees
+    below aligned with the parents they came from.
+    """
+    def hit(node):
+        return any(node is h for h in hi)
+
+    slot = [0]
+    pos = {}
+
+    def place(node, depth, inherited=False):
+        mark = inherited or hit(node)
+        kids = node[1:]
+        if not kids:
+            x = slot[0] * dx
+            slot[0] += 1
+        else:
+            xs = [place(k, depth + 1, mark) for k in kids]
+            x = sum(xs) / len(xs)
+        pos[id(node)] = (left + x, top - depth * dy, node[0], mark)
+        return x
+
+    place(tree, 0)
+
+    def draw(node):
+        x, y, label, mark = pos[id(node)]
+        for kid in node[1:]:
+            kx, ky, _, _ = pos[id(kid)]
+            ax.plot([x, kx], [y, ky], color=COL["rule"], lw=0.9, zorder=1)
+            draw(kid)
+        ec = COL["std"] if mark else COL["third"]
+        ax.add_patch(plt.Circle((x, y), r, facecolor="#fdf1e8" if mark
+                                else "white", edgecolor=ec, lw=1.0, zorder=2))
+        ax.text(x, y, label, ha="center", va="center", fontsize=fs,
+                zorder=3, color=ec)
+
+    draw(tree)
+    return pos[id(tree)][0], left + (slot[0] - 1) * dx
+
+
+def gp_operators():
+    """Why the classical operators are called syntactic.
+
+    Both panels show the same thing happening to structure alone: a subtree is
+    moved or replaced with no reference to what the expression computes, which
+    is the argument Chapter 2 makes in prose and the premise the whole method
+    under study is built on.
+    """
+    # Both panels are aspect-equal, so their nodes only come out the same size
+    # if the column widths are in the same ratio as the x ranges they hold.
+    XL, XR = (-0.7, 6.6), (-0.7, 3.81)
+    YB, YT = -1.9, 8.4
+    fig, axes = plt.subplots(1, 2, figsize=(W_FULL, 4.3),
+                             gridspec_kw={"width_ratios":
+                                          [XL[1] - XL[0], XR[1] - XR[0]]})
+    fs = BASE_SIZE - 2.5
+    # the rows are far enough apart that a two-line note fits between them
+    # without meeting the leaves above it
+    top_a, top_b = 6.0, 0.9
+
+    # -- subtree crossover: the two highlighted branches change places
+    ax = axes[0]
+    ax.axis("off")
+    ax.set_aspect("equal")
+    swap1 = ["×", ["x1"], ["x2"]]
+    p1 = ["−", ["x0"], swap1]
+    swap2 = ["0.3"]
+    p2 = ["+", ["x3"], swap2]
+    _expr_tree(ax, p1, 0.0, top_a, hi=[swap1])
+    _expr_tree(ax, p2, 4.6, top_a, hi=[swap2])
+    o1 = ["−", ["x0"], ["0.3"]]
+    o2 = ["+", ["x3"], ["×", ["x1"], ["x2"]]]
+    _expr_tree(ax, o1, 0.0, top_b, hi=[o1[2]])
+    _expr_tree(ax, o2, 3.4, top_b, hi=[o2[2]])
+
+    for x, lab in ((0.75, "parent 1"), (5.1, "parent 2")):
+        ax.text(x, 6.95, lab, ha="center", fontsize=fs, color=COL["note"])
+    for x, lab in ((0.5, "offspring 1"), (4.15, "offspring 2")):
+        ax.text(x, 1.85, lab, ha="center", fontsize=fs, color=COL["note"])
+    ax.annotate("", xy=(2.9, 2.15), xytext=(2.9, 3.35),
+                arrowprops=dict(arrowstyle="->", lw=0.9, color=COL["third"]))
+    ax.text(3.1, 2.75, "the two branches\nchange places", ha="left",
+            va="center", fontsize=fs, color=COL["note"])
+    ax.text(2.95, 7.85, "subtree crossover", ha="center", fontsize=fs,
+            color=COL["note"], fontweight="bold")
+    ax.set_xlim(*XL)
+    ax.set_ylim(YB, YT)
+
+    # -- subtree mutation: one branch is replaced by a random one
+    ax = axes[1]
+    ax.axis("off")
+    ax.set_aspect("equal")
+    gone = ["+", ["x0"], ["x1"]]
+    pm = ["×", gone, ["x2"]]
+    _expr_tree(ax, pm, 0.0, top_a, hi=[gone])
+    mut = ["×", ["x3"], ["x2"]]
+    _expr_tree(ax, mut, 0.35, top_b, hi=[mut[1]])
+
+    ax.text(1.25, 6.95, "parent", ha="center", fontsize=fs, color=COL["note"])
+    ax.text(0.85, 1.85, "mutant", ha="center", fontsize=fs, color=COL["note"])
+    ax.annotate("", xy=(0.85, 2.15), xytext=(0.85, 3.35),
+                arrowprops=dict(arrowstyle="->", lw=0.9, color=COL["third"]))
+    ax.text(1.05, 2.75, "replaced by a\nrandom branch", ha="left", va="center",
+            fontsize=fs, color=COL["note"])
+    ax.text(1.55, 7.85, "subtree mutation", ha="center", fontsize=fs,
+            color=COL["note"], fontweight="bold")
+    ax.set_xlim(*XR)
+    ax.set_ylim(YB, YT)
+
+    fig.subplots_adjust(wspace=0.02)
+    save(fig, "fig_gp_operators")
+
+
 FIGURES = {
+    "gp_cycle": gp_cycle,
+    "gp_operators": gp_operators,
     "transformer_architecture": transformer_architecture,
     "tsgp_model": tsgp_model,
     "semantic_distance": semantic_distance,

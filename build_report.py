@@ -659,6 +659,30 @@ replace_figure("Parent-to-offspring semantic distance", "fig_semantic_step.png")
 
 # each diagram sits inside the section that introduces it, one paragraph in,
 # rather than at the tail of the section before it
+
+# Chapter 2 described the loop and its operators in prose alone. The cycle
+# goes after the paragraph that walks through it, and the operators go at the
+# head of the semantic section, where their blindness to behaviour is the
+# argument being made.
+a = after_paras(find_heading("Genetic programming for symbolic regression",
+                             level=2), 2)
+figure_before(a, "fig_gp_cycle.png",
+              "PLACEHOLDER  The genetic programming loop. Each generation "
+              "evaluates the population, selects parents and produces the next "
+              "population by crossover and mutation, repeating until the "
+              "generation limit is reached. TSGP replaces one box of this "
+              "diagram, the variation step, and leaves the rest of the loop as "
+              "it stands.", width=6.0)
+
+a = after_paras(find_heading("Semantic and geometric semantic genetic "
+                             "programming", level=2), 1)
+figure_before(a, "fig_gp_operators.png",
+              "PLACEHOLDER  Subtree crossover exchanges a branch between two "
+              "parents; subtree mutation replaces a branch with a randomly "
+              "generated one. Both act on structure alone, with no regard for "
+              "what the expression computes, which is the limitation the "
+              "semantic methods address.", width=5.8)
+
 a = after_paras(find_heading("The transformer architecture"), 1)
 figure_before(a, "fig_transformer_architecture.png",
               "PLACEHOLDER  The encoder-decoder transformer of Vaswani et al. "
