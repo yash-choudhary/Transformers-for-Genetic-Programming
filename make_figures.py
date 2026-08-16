@@ -168,44 +168,222 @@ def locality_control():
     ax.bar(x + w / 2, other, w, facecolor="white", edgecolor=COL["third"],
            hatch="///", lw=0.9, label="to an unrelated parent")
     for i, (a, b) in enumerate(zip(own, other)):
-        ax.text(i, max(a, b) * 1.25, f"{a / b:.2f}", ha="center",
+        ax.text(i, max(a, b) * 1.35, f"{a / b:.2f}", ha="center",
                 fontsize=BASE_SIZE - 2, color=COL["note"])
     ax.set_yscale("log")
-    ax.set_ylim(0.4, 200)
+    # Headroom above the tallest bar for the ratio labels, and again above
+    # those for the legend, so neither lands on the data or on a tick label.
+    ax.set_ylim(0.35, 4000)
+    ax.set_yticks([1, 10, 100])
+    ax.get_yaxis().set_major_formatter(ScalarFormatter())
+    ax.get_yaxis().set_minor_formatter(NullFormatter())
     ax.set_xticks(x)
     ax.set_xticklabels([f"{float(k):g}" for k in keys])
     ax.set_xlabel("requested semantic distance  SD$_d$")
     ax.set_ylabel("semantic distance")
+    ax.text(-0.42, 620, "ratio shown above each pair",
+            fontsize=BASE_SIZE - 2.5, color=COL["note"])
     title(ax, "Offspring land nearer their own parent than a stranger")
-    ax.legend(frameon=False, loc="upper left")
+    ax.legend(frameon=False, loc="upper right", ncol=1)
     save(fig, "fig_locality_control")
 
 
-def size_generations():
-    """stdGP grows its solutions across a run; TSGP does not."""
-    def series(pat):
-        return [json.load(open(f))["best_size"]
-                for f in glob.glob(f"results_instr_base/{pat}")]
-    sd, ts = series("*stdgp*.json"), series("*tsgp*.json")
-    if not (sd and ts):
-        print("  (skipped size_generations: no instrumented runs)")
+def size_generations(dataset="1027_ESL"):
+    """stdGP grows its solutions across a run; TSGP does not.
+
+    Drawn from the full 30-run grid rather than the two instrumented runs: a
+    median over two runs is not a median worth plotting.
+    """
+    def series(method):
+        out = []
+        for f in glob.glob(f"results_v7/runs/{dataset}__{method}__*.json"):
+            h = json.load(open(f)).get("best_size_history")
+            if h:
+                out.append(h)
+        return np.array(out, dtype=float) if out else None
+
+    sd, ts = series("stdgp"), series("tsgp")
+    if sd is None or ts is None:
+        print("  (skipped size_generations: no per-generation history)")
         return
 
     fig, ax = plt.subplots(figsize=(W_HALF, 3.0))
-    for s in sd:
-        ax.plot(s, color=COL["std"], alpha=0.25, lw=0.8)
-    for s in ts:
-        ax.plot(s, color=COL["tsgp"], alpha=0.25, lw=0.8)
-    ax.plot(np.median(np.array(sd), axis=0), color=COL["std"], lw=2.2,
-            label="standard GP")
-    ax.plot(np.median(np.array(ts), axis=0), color=COL["tsgp"], lw=2.2,
-            ls=(0, (5, 2)), label="TSGP")
+    g = np.arange(sd.shape[1])
+    for arr, col, lab, ls in ((sd, COL["std"], "standard GP", "-"),
+                              (ts, COL["tsgp"], "TSGP", (0, (5, 2)))):
+        lo, mid, hi = np.percentile(arr, [25, 50, 75], axis=0)
+        ax.fill_between(g, lo, hi, color=col, alpha=0.15, lw=0)
+        ax.plot(g, mid, color=col, lw=2.0, ls=ls, label=lab)
     ax.set_xlabel("generation")
     ax.set_ylabel("size of best solution (nodes)")
-    ax.set_xlim(0, 50)
-    title(ax, "Standard GP builds structure across a run; TSGP does not (ESL)")
-    ax.legend(frameon=False, loc="upper left")
+    ax.set_xlim(0, sd.shape[1] - 1)
+    ax.set_ylim(bottom=0)
+    ax.text(0.02, 0.94, f"median and interquartile range, {sd.shape[0]} runs",
+            transform=ax.transAxes, fontsize=BASE_SIZE - 2.5,
+            color=COL["note"], va="top")
+    title(ax, "Standard GP builds structure across a run; TSGP does not")
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(0.0, 0.90))
     save(fig, "fig_size_generations")
+
+
+# ------------------------------------------------------- schematic helpers
+def _boxer(fig, ax):
+    """Return box/arrow helpers that size a box to the text it contains, so
+    editing a label can never push text outside its border."""
+    def box(cx, cy, text, ec, fs, fc="white", pad_x=0.012, pad_y=0.030,
+            weight="normal"):
+        t = ax.text(cx, cy, text, ha="center", va="center", fontsize=fs,
+                    zorder=3, linespacing=1.45, fontweight=weight)
+        fig.canvas.draw()
+        bb = t.get_window_extent().transformed(ax.transData.inverted())
+        ax.add_patch(plt.Rectangle(
+            (bb.x0 - pad_x, bb.y0 - pad_y), bb.width + 2 * pad_x,
+            bb.height + 2 * pad_y, facecolor=fc, edgecolor=ec, lw=1.0,
+            zorder=2))
+        return dict(l=bb.x0 - pad_x, r=bb.x1 + pad_x,
+                    b=bb.y0 - pad_y, t=bb.y1 + pad_y, cx=cx, cy=cy)
+
+    def varrow(x, y1, y2, label=None):
+        ax.annotate("", xy=(x, y2), xytext=(x, y1),
+                    arrowprops=dict(arrowstyle="->", lw=0.9,
+                                    color=COL["third"]))
+        if label:
+            ax.text(x + 0.012, (y1 + y2) / 2, label, ha="left", va="center",
+                    fontsize=BASE_SIZE - 3, color=COL["note"])
+
+    def harrow(x1, x2, y, label=None):
+        ax.annotate("", xy=(x2, y), xytext=(x1, y),
+                    arrowprops=dict(arrowstyle="->", lw=0.9,
+                                    color=COL["third"]))
+        if label:
+            ax.text((x1 + x2) / 2, y + 0.022, label, ha="center",
+                    fontsize=BASE_SIZE - 3, color=COL["note"])
+    return box, varrow, harrow
+
+
+def transformer_architecture():
+    """The encoder-decoder transformer, at the level of detail the report needs.
+
+    Stack labels are rotated down the left edge of each dashed region rather
+    than sitting above it: a horizontal label there collides with whatever box
+    is above, and the collision only appears once the boxes are auto-sized.
+    """
+    fig, ax = plt.subplots(figsize=(W_FULL, 4.6))
+    ax.axis("off")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    box, varrow, harrow = _boxer(fig, ax)
+    fs = BASE_SIZE - 2.5
+    xe, xd = 0.30, 0.755
+
+    # dashed regions cover only the repeated layers, not the stack's in/outputs
+    ax.add_patch(plt.Rectangle((0.145, 0.215), 0.31, 0.375, facecolor="#f6f9fc",
+                               edgecolor=COL["third"], lw=0.8, ls=(0, (4, 3)),
+                               zorder=1))
+    ax.add_patch(plt.Rectangle((0.595, 0.175), 0.32, 0.545, facecolor="#f6f9fc",
+                               edgecolor=COL["third"], lw=0.8, ls=(0, (4, 3)),
+                               zorder=1))
+    ax.text(0.128, 0.403, "ENCODER  $\\times N$", rotation=90, ha="center",
+            va="center", fontsize=fs, color=COL["note"], fontweight="bold")
+    # on the RIGHT of the decoder region: on the left it sits exactly where the
+    # cross-attention arrow's label goes
+    ax.text(0.932, 0.448, "DECODER  $\\times N$", rotation=90, ha="center",
+            va="center", fontsize=fs, color=COL["note"], fontweight="bold")
+
+    box(xe, 0.075, "input tokens\n+ positional encoding", COL["third"], fs)
+    varrow(xe, 0.135, 0.245)
+    e1 = box(xe, 0.305, "multi-head\nself-attention", COL["tsgp"], fs)
+    varrow(xe, e1["t"], 0.445, "add & norm")
+    e2 = box(xe, 0.505, "feed-forward", COL["tsgp"], fs)
+    varrow(xe, e2["t"], 0.645, "add & norm")
+    box(xe, 0.705, "encoded representation", COL["third"], fs)
+
+    box(xd, 0.075, "output tokens so far\n+ positional encoding", COL["third"],
+        fs)
+    varrow(xd, 0.135, 0.205)
+    d1 = box(xd, 0.265, "masked multi-head\nself-attention", COL["extra"], fs)
+    varrow(xd, d1["t"], 0.375, "add & norm")
+    d2 = box(xd, 0.435, "cross-attention", COL["extra"], fs)
+    varrow(xd, d2["t"], 0.545, "add & norm")
+    d3 = box(xd, 0.605, "feed-forward", COL["extra"], fs)
+    varrow(xd, d3["t"], 0.755, "add & norm")
+    box(xd, 0.815, "linear + softmax\n$\\rightarrow$ next-token distribution",
+        COL["third"], fs)
+
+    harrow(0.455, 0.665, 0.435)
+    ax.text(0.560, 0.472, "keys, values", ha="center", fontsize=fs - 0.5,
+            color=COL["note"])
+    save(fig, "fig_transformer_architecture")
+
+
+def tsgp_model():
+    """The specific model this study trains, with its actual configuration.
+
+    Laid out over two rows. A single row of seven boxes does not fit the text
+    column: the boxes overlap, and because each arrow is drawn between two
+    auto-sized borders the overlap silently reverses the arrows.
+    """
+    fig, ax = plt.subplots(figsize=(W_FULL, 3.6))
+    ax.axis("off")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    box, varrow, harrow = _boxer(fig, ax)
+    fs = BASE_SIZE - 2.5
+    y1, y2 = 0.78, 0.40
+
+    a1 = box(0.145, y1, "parent expression\n$\\rightarrow$ prefix tokens",
+             COL["third"], fs)
+    a2 = box(0.500, y1, "embedding, d = 128\n+ positional encoding\n"
+                        "+ desired distance SD$_d$", COL["tsgp"], fs)
+    a3 = box(0.845, y1, "encoder $\\times 2$\n8 heads", COL["tsgp"], fs)
+    harrow(a1["r"] + 0.01, a2["l"] - 0.01, y1)
+    harrow(a2["r"] + 0.01, a3["l"] - 0.01, y1)
+
+    b1 = box(0.145, y2, "decoder $\\times 2$\ncross-attends the encoder",
+             COL["extra"], fs)
+    b2 = box(0.470, y2, "linear\n$\\rightarrow$ 22 tokens", COL["third"], fs)
+    b3 = box(0.685, y2, "syntax control\nmask invalid", COL["std"], fs)
+    b4 = box(0.905, y2, "sample\nnext token", COL["std"], fs)
+    harrow(b1["r"] + 0.01, b2["l"] - 0.01, y2)
+    harrow(b2["r"] + 0.01, b3["l"] - 0.01, y2)
+    harrow(b3["r"] + 0.01, b4["l"] - 0.01, y2)
+
+    def route(points, dashed=False):
+        """Orthogonal polyline with an arrowhead on the last segment. A curved
+        connector between two rows sweeps across the middle of the figure and
+        crosses whatever boxes are there; right-angled routing cannot."""
+        style = dict(color=COL["third"], lw=0.9,
+                     ls=(0, (3, 2)) if dashed else "-")
+        for (x1, y1_), (x2, y2_) in zip(points[:-1], points[1:-1] + [points[-1]]):
+            ax.plot([x1, x2], [y1_, y2_], zorder=1, **style)
+        ax.annotate("", xy=points[-1], xytext=points[-2],
+                    arrowprops=dict(arrowstyle="-|>", lw=0.9,
+                                    color=COL["third"],
+                                    ls=(0, (3, 2)) if dashed else "-"))
+
+    # encoder output drops to the decoder row, routed clear of both rows
+    ymid = (a3["b"] + b1["t"]) / 2
+    route([(a3["cx"], a3["b"] - 0.012), (a3["cx"], ymid),
+           (b1["cx"], ymid), (b1["cx"], b1["t"] + 0.012)])
+    ax.text(0.505, ymid + 0.028, "keys, values", ha="center", fontsize=fs - 0.5,
+            color=COL["note"])
+
+    # the sampled token is appended and the decoder runs again
+    ylow = b1["b"] - 0.13
+    route([(b4["cx"], b4["b"] - 0.012), (b4["cx"], ylow),
+           (b1["cx"], ylow), (b1["cx"], b1["b"] - 0.012)], dashed=True)
+    ax.text(0.520, ylow - 0.055, "appended, then decoded again until the tree "
+                                 "is complete", ha="center", fontsize=fs - 0.5,
+            color=COL["note"], style="italic")
+
+    ax.text(0.5, 0.955, "934,000 parameters  ·  vocabulary of 22 tokens  ·  "
+                        "sequences capped at 100  ·  AdamW, lr $10^{-3}$, "
+                        "8 epochs",
+            ha="center", fontsize=fs, color=COL["note"])
+    ax.text(0.5, 0.030, "trained once on 5M semantically similar expression "
+                        "pairs, then reused unchanged for every search",
+            ha="center", fontsize=fs, color=COL["tsgp"])
+    save(fig, "fig_tsgp_model")
 
 
 def size_vs_accuracy():
@@ -391,13 +569,15 @@ def semantic_distance():
 
 
 FIGURES = {
+    "transformer_architecture": transformer_architecture,
+    "tsgp_model": tsgp_model,
+    "semantic_distance": semantic_distance,
+    "size_generations": size_generations,
     "step_floor": step_floor,
     "locality_control": locality_control,
-    "size_generations": size_generations,
-    "size_vs_accuracy": size_vs_accuracy,
-    "task_difficulty": task_difficulty,
     "decision_value": decision_value,
-    "semantic_distance": semantic_distance,
+    "task_difficulty": task_difficulty,
+    "size_vs_accuracy": size_vs_accuracy,
 }
 
 if __name__ == "__main__":
