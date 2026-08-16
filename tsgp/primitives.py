@@ -48,7 +48,8 @@ def create_pset(num_features=None):
     pset.addPrimitive(operator.add, 2, name="add")
     pset.addPrimitive(operator.sub, 2, name="sub")
     pset.addPrimitive(operator.mul, 2, name="mul")
-    pset.addPrimitive(protdiv, 2, name="protdiv")
+    if not config.GP_EXCLUDE_DIVISION:
+        pset.addPrimitive(protdiv, 2, name="protdiv")
     pset.addEphemeralConstant("ERC", _erc_generator)
     for i in range(num_features):
         pset.renameArguments(**{f"ARG{i}": f"x{i}"})

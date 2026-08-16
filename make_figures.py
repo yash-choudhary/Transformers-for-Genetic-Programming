@@ -226,6 +226,116 @@ def size_generations(dataset="1027_ESL"):
     save(fig, "fig_size_generations")
 
 
+# the published medians, Anthes, Sobania and Rothlauf (2025), Table 2
+PAPER_RMSE = {"1030_ERA": (0.797, 0.817), "1027_ESL": (0.379, 0.502),
+              "690_visualizing_galaxy": (0.327, 0.337),
+              "1029_LEV": (0.672, 0.703), "529_pollen": (0.518, 0.514)}
+
+
+def rmse_vs_paper():
+    """Our medians beside the published ones, four bars per dataset.
+
+    Replaces a version that printed a rotated number on every bar; the values
+    are in Table 6.1 immediately below, so the bars only have to carry the
+    comparison.
+    """
+    ours = {}
+    for ds in ORDER:
+        row = {}
+        for method in ("tsgp", "stdgp"):
+            v = [json.load(open(f))["test_rmse"] for f in
+                 glob.glob(f"results_v7/runs/{ds}__{method}__*.json")]
+            if v:
+                row[method] = float(np.median(v))
+        if len(row) == 2:
+            ours[ds] = row
+    if len(ours) < len(ORDER):
+        print("  (skipped rmse_vs_paper: incomplete results_v7 grid)")
+        return
+
+    fig, ax = plt.subplots(figsize=(W_FULL, 3.0))
+    x = np.arange(len(ORDER))
+    w = 0.2
+    bars = (("TSGP (ours)", COL["tsgp"], None,
+             [ours[d]["tsgp"] for d in ORDER]),
+            ("TSGP (paper)", COL["tsgp"], "//",
+             [PAPER_RMSE[d][0] for d in ORDER]),
+            ("standard GP (ours)", COL["std"], None,
+             [ours[d]["stdgp"] for d in ORDER]),
+            ("standard GP (paper)", COL["std"], "//",
+             [PAPER_RMSE[d][1] for d in ORDER]))
+    for i, (lab, col, hatch, vals) in enumerate(bars):
+        ax.bar(x + (i - 1.5) * w, vals, w * 0.88, label=lab, color=col,
+               alpha=1.0 if hatch is None else 0.28, hatch=hatch,
+               edgecolor=col, linewidth=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels([SHORT[d] for d in ORDER])
+    ax.set_ylabel("median test RMSE")
+    ax.set_ylim(0, max(max(v[3]) for v in bars) * 1.32)
+    ax.grid(axis="x", visible=False)
+    ax.text(0.0, 1.02, "lower is better", transform=ax.transAxes,
+            fontsize=BASE_SIZE - 2.5, color=COL["note"])
+    title(ax, "Median test RMSE, ours against the paper")
+    ax.legend(frameon=False, ncol=2, loc="upper right",
+              bbox_to_anchor=(1.0, 1.05), columnspacing=1.2)
+    save(fig, "fig_rmse_vs_paper")
+
+
+def semantic_step(dataset="1027_ESL", target_norm=15.6, run="run00"):
+    """The annealing result: stdGP's step shrinks across a run, TSGP's does not.
+
+    Every generation is drawn rather than six sampled ones, and the values are
+    read off the axis instead of printed beside each marker, which is what made
+    the earlier version of this figure collide with its own tick labels. The
+    run drawn is the one the report's numbers are quoted from (28.2 down to
+    1.0), so the figure and the text continue to agree.
+    """
+    def series(method):
+        f = f"results_instr_base/{dataset}__{method}__{run}.json"
+        if not os.path.exists(f):
+            return None
+        h = json.load(open(f)).get("pair_distance_median")
+        return np.array(h, dtype=float) if h else None
+
+    sd, ts = series("stdgp"), series("tsgp")
+    if sd is None or ts is None:
+        print("  (skipped semantic_step: run instrument.py first)")
+        return
+    # generation 0 is the initial population: no parent, so no step to measure
+    sd, ts = sd[1:], ts[1:]
+
+    def smooth(v, w=5):
+        pad = np.pad(v, (w // 2, w // 2), mode="edge")
+        return np.array([np.nanmedian(pad[i:i + w]) for i in range(len(v))])
+
+    fig, ax = plt.subplots(figsize=(W_HALF, 3.0))
+    g = np.arange(1, len(sd) + 1)
+    ax.axhline(target_norm, color=COL["rule"], lw=1.0, ls=(0, (4, 3)))
+    ax.text(len(sd) * 0.5, target_norm - 0.8,
+            f"magnitude of the target signal ({target_norm})", ha="center",
+            va="top", fontsize=BASE_SIZE - 2.5, color=COL["note"])
+    # the generation-to-generation series is noisy enough to read as hatching;
+    # the faint line is the measurement, the bold one a five-generation median
+    for m, col, lab, ls in ((ts, COL["tsgp"], "TSGP", (0, (5, 2))),
+                            (sd, COL["std"], "standard GP", "-")):
+        ax.plot(g, m, color=col, lw=0.9, alpha=0.30)
+        ax.plot(g, smooth(m), color=col, lw=2.1, ls=ls, label=lab)
+    ax.annotate(f"{sd[0]:.1f}", (g[0], sd[0]), color=COL["std"],
+                textcoords="offset points", xytext=(5, 2),
+                fontsize=BASE_SIZE - 2)
+    ax.annotate(f"{sd[-1]:.1f}", (g[-1], sd[-1]), color=COL["std"], ha="right",
+                textcoords="offset points", xytext=(-3, 7),
+                fontsize=BASE_SIZE - 2)
+    ax.set_xlabel("generation")
+    ax.set_ylabel("parent-to-offspring semantic distance")
+    ax.set_xlim(1, len(sd))
+    ax.set_ylim(0, np.nanmax([sd, ts]) * 1.12)
+    title(ax, "Semantic step size across generations")
+    ax.legend(frameon=False, loc="upper right", ncol=2,
+              bbox_to_anchor=(1.0, 1.02))
+    save(fig, "fig_semantic_step")
+
+
 # ------------------------------------------------------- schematic helpers
 def _boxer(fig, ax):
     """Return box/arrow helpers that size a box to the text it contains, so
@@ -395,7 +505,7 @@ def size_vs_accuracy():
         for r in json.load(open(p)):
             ml.setdefault(r["dataset"], defaultdict(list))[r["model"]].append(r)
 
-    fig, axes = plt.subplots(1, 5, figsize=(W_FULL * 1.55, 2.5))
+    fig, axes = plt.subplots(1, 5, figsize=(W_FULL * 1.55, 3.1))
     for ax, ds in zip(axes, ORDER):
         pts = []
         if ds in std:
@@ -421,7 +531,9 @@ def size_vs_accuracy():
         for lab, sz, acc, col, mk in pts:
             ax.scatter(sz, acc, s=46, color=col, marker=mk, zorder=3,
                        edgecolor="white", linewidth=0.7, label=lab)
-        linlog(ax, "x", [5, 10, 25, 50, 100, 200])
+        # five panels across one text width: three ticks is as many as fit
+        # without the numbers running into one another
+        linlog(ax, "x", [5, 25, 100])
         ax.set_xlim(4, 260)
         if np.isfinite(maj):
             top = max([p[2] for p in pts] + [maj]) + 0.035
@@ -429,10 +541,13 @@ def size_vs_accuracy():
         ax.set_title(SHORT[ds], fontsize=BASE_SIZE + 0.5)
         ax.set_xlabel("solution size (nodes)")
     axes[0].set_ylabel("test accuracy")
+    # reserve the strip at the foot of the figure rather than hanging the
+    # legend below it, which put it across the axis labels
+    fig.tight_layout(rect=(0, 0.17, 1, 1), w_pad=1.4)
     h, l = axes[0].get_legend_handles_labels()
     fig.legend(h, l, loc="lower center", ncol=4, frameon=False,
-               bbox_to_anchor=(0.5, -0.16))
-    fig.text(0.5, -0.05, "dashed line: majority-class baseline",
+               bbox_to_anchor=(0.5, 0.055))
+    fig.text(0.5, 0.008, "dashed line: majority-class baseline",
              ha="center", fontsize=BASE_SIZE - 2, color=COL["note"])
     if DRAW_TITLES:
         fig.suptitle("Accuracy against solution size, median-split task", y=1.05)
@@ -573,6 +688,8 @@ FIGURES = {
     "tsgp_model": tsgp_model,
     "semantic_distance": semantic_distance,
     "size_generations": size_generations,
+    "semantic_step": semantic_step,
+    "rmse_vs_paper": rmse_vs_paper,
     "step_floor": step_floor,
     "locality_control": locality_control,
     "decision_value": decision_value,

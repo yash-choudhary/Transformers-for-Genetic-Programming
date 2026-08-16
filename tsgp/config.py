@@ -36,6 +36,15 @@ GP_MUTATION_DEPTH_MAX = 2
 GP_INTERNAL_NODE_BIAS = 0.1
 NUM_RUNS = 30
 
+# Diagnostic switch for Sect. 7.8, off by default and never on for a reported
+# replication arm: drop protected division from the primitive set. Table 1
+# specifies {V, ERC, +, -, x, %}, so a run with this set is deliberately
+# unfaithful. It exists to price what the transformer's reluctance to emit
+# protdiv is actually worth, which decides whether regenerating the training
+# pool to encourage division is a lead worth following.
+#   set TSGP_NO_DIVISION=1
+GP_EXCLUDE_DIVISION = os.environ.get("TSGP_NO_DIVISION", "0") == "1"
+
 NUM_SYNTHETIC_PROBLEMS = 50
 DATAGEN_GP_POP_SIZE = 2000
 # Sect. 4.1: data generation uses "all other GP search parameters ... as
