@@ -43,6 +43,12 @@ FIRST_CHAPTER = "Introduction"
 AFTER_LAST_CHAPTER = "Appendices"
 
 GREY = RGBColor(0x5F, 0x63, 0x68)
+
+# Page numbers in the two front-matter lists and in the index cannot be known
+# until the document is laid out, so every one of them is written first as
+# this placeholder -- the width of a real page number, so that filling it in
+# afterwards cannot reflow the line it sits on.
+PLACEHOLDER_PAGE = "00"
 doc = Document(SRC)
 STYLES = {s.name for s in doc.styles}
 FIGCAP = "Figcaption" if "Figcaption" in STYLES else None
@@ -115,9 +121,28 @@ def rich_before(anchor, parts):
     return p
 
 
+def unnumber(p):
+    """Suppress the automatic heading number on one paragraph.
+
+    Word numbers Heading 1 and 2 throughout, so an appendix heading inserted
+    with those styles comes out as a section of the last chapter -- "10.5
+    Appendix B". The back-matter headings in the source document suppress it
+    the standard way, with numId 0, and this does the same.
+    """
+    pPr = p._p.get_or_add_pPr()
+    numPr = OxmlElement("w:numPr")
+    for tag, val in (("w:ilvl", "0"), ("w:numId", "0")):
+        el = OxmlElement(tag)
+        el.set(qn("w:val"), val)
+        numPr.append(el)
+    pPr.append(numPr)
+    return p
+
+
 def heading_before(anchor, text, level):
     p = anchor.insert_paragraph_before("", style=f"Heading {level}")
     p.add_run(text)
+    return p
     return p
 
 
@@ -645,6 +670,44 @@ correct("The third is to validate the training pool, on which every hypothesis "
         "matched in the same way and ask whether anything other than the floor "
         "responds to it.")
 
+# -- proofreading ---------------------------------------------------------
+# The report has sections 3.2, 4.1 and 4.2 of its own, so a bare reference to
+# the paper's sections of those numbers sends a reader to the wrong document.
+correct("Section 4.1 specifies a 10% terminal bias in subtree crossover.",
+        "Section 4.1 of the paper specifies a 10% terminal bias in subtree "
+        "crossover.")
+correct("Section 4.1 specifies AdamW; the original run used Adam.",
+        "Section 4.1 of the paper specifies AdamW; the original run used "
+        "Adam.")
+correct("Section 3.2 describes the desired distance as the means of "
+        "controlling step size",
+        "Section 3.2 of the paper describes the desired distance as the means "
+        "of controlling step size")
+
+# What is returned is the best on the training data; the test set is what it
+# is then measured on, and the two must not be run together in one clause.
+correct("The process repeats for a fixed number of generations, and the best "
+        "individual on unseen data is returned.",
+        "The process repeats for a fixed number of generations, and the best "
+        "individual found is returned and measured on unseen data.")
+
+# "the authors" a sentence after the paper's authors reads as theirs
+correct("It is very recent and, to the best of the authors' knowledge, not "
+        "yet independently replicated;",
+        "It is very recent and, to the best of our knowledge, not yet "
+        "independently replicated;")
+
+# pollen is synthetic, as Section 4.1 now says, so the benchmarks cannot be
+# described as real-world wholesale
+correct("both the synthetic problems used to build the model and the "
+        "real-world benchmarks used to evaluate it.",
+        "both the synthetic problems used to build the model and the "
+        "benchmarks used to evaluate it.")
+correct("a separate body of data is used to evaluate it, namely the "
+        "real-world benchmarks on which the evolutionary search is run.",
+        "a separate body of data is used to evaluate it, namely the benchmark "
+        "datasets on which the evolutionary search is run.")
+
 print("corrections applied")
 
 
@@ -1043,7 +1106,385 @@ para_before(T, "The classification benchmarks are constructed by thresholding "
                "claim resting on them. And the comparison is against standard "
                "genetic programming alone.")
 
-print("done inserting")
+print("inserting the end matter ...")
+
+
+def clear_section(heading_text):
+    """Empty a section's body, leaving its heading, and return the heading.
+
+    Only paragraphs and tables are removed, and the walk stops at anything
+    else. The body's own sectPr is a sibling of them and is the last element
+    of the document, so a loop that deletes whatever it finds takes the
+    section properties with it when it clears the final section -- which cost
+    this document its binding gutter, its margins and the restart of page
+    numbering at Chapter 1, and did so silently, since python-docx writes a
+    default sectPr back on save.
+    """
+    from docx.text.paragraph import Paragraph
+    head = find_heading(heading_text, level=1)
+    node = head._p.getnext()
+    while node is not None and node.tag in (qn("w:p"), qn("w:tbl")):
+        if node.tag == qn("w:p") and \
+                Paragraph(node, doc).style.name.startswith("Heading"):
+            break
+        nxt = node.getnext()
+        node.getparent().remove(node)
+        node = nxt
+    return head
+
+
+# ---------------------------------------------------------------- appendices
+# The stub said the parameter inventory and the commands were in Chapter 5.
+# Chapter 5 has the parameters the paper leaves open, not all of them, so the
+# inventory is assembled here from config.py instead: one place a reader can
+# check every value the study ran with, against what the paper specifies.
+A = find_heading("Glossary of terms", level=1)
+clear_section("Appendices")
+para_before(A, "Three appendices follow. Appendix A is the complete parameter "
+               "inventory, marking for each value whether the original paper "
+               "specifies it or it was chosen here. Appendix B lists the "
+               "commands that reproduce the study end to end. Appendix C gives "
+               "the full distribution behind every median quoted in Chapters 6 "
+               "to 8, since a median alone says nothing about spread.")
+
+unnumber(heading_before(A, "Appendix A  Parameter inventory", 2))
+para_before(A, "Values are as run. The source column distinguishes what the "
+               "paper states from what it leaves open, which is the "
+               "distinction Chapter 7 turns on: a discrepancy traceable to a "
+               "specified value would be an implementation fault, and one "
+               "traceable to an unspecified value would not.")
+PAPER, OURS = "Paper", "Ours"
+table_before(A, ["Parameter", "Value", "Source"],
+             [["Population size", "100", PAPER],
+              ["Generations", "50", PAPER],
+              ["Initialisation", "Ramped half-and-half, depth 2 to 5", PAPER],
+              ["Maximum tree depth", "17", PAPER],
+              ["Selection", "Tournament, size 5", PAPER],
+              ["Function set", "add, sub, mul, protected div", PAPER],
+              ["Terminal set", "x0 to x3, ephemeral random constants", PAPER],
+              ["ERC grid", "-0.5 to 0.5 in steps of 0.1", PAPER],
+              ["Fitness", "Root mean squared error", PAPER],
+              ["Crossover", "Subtree, p = 0.9, 10% terminal bias", PAPER],
+              ["Mutation", "Subtree, p = 0.1, new subtree depth 0 to 2",
+               PAPER],
+              ["Runs per dataset", "30", PAPER],
+              ["Train and test split", "50/50, both standardised", PAPER],
+              ["Replacement", "Generational, no elitism", OURS]],
+             [2.0, 2.75, 0.85], left_cols=(1,))
+caption_before(A, "Table A.1  Search and evaluation, as used for both TSGP "
+                  "and the standard GP baseline.")
+
+table_before(A, ["Parameter", "Value", "Source"],
+             [["Synthetic problems", "50", PAPER],
+              ["Population, data generation", "2,000", PAPER],
+              ["Generations, data generation", "50", PAPER],
+              ["Selection, data generation", "Double tournament", PAPER],
+              ["Samples per synthetic problem", "200", OURS],
+              ["Probe inputs for semantics", "100", OURS],
+              ["Neighbours per function, k", "3", PAPER],
+              ["Pair filter", "0 < SD < 100", PAPER],
+              ["Training pairs", "5,000,000", PAPER],
+              ["Encoder and decoder layers", "2 and 2", PAPER],
+              ["Attention heads", "8", PAPER],
+              ["Hidden dimension", "128", PAPER],
+              ["Feed-forward dimension", "512, four times hidden", OURS],
+              ["Maximum sequence length", "100 tokens", PAPER],
+              ["Vocabulary", "22 tokens", "Follows"],
+              ["Parameters", "About 934,000", "Follows"],
+              ["Optimiser", "AdamW, learning rate 1e-3", PAPER],
+              ["Weight decay", "0.004", OURS],
+              ["Epochs", "8", PAPER],
+              ["Batch size", "256", OURS],
+              ["Loss", "Masked cross-entropy", OURS]],
+             [2.0, 2.75, 0.85], left_cols=(1,))
+caption_before(A, "Table A.2  Model building: the synthetic corpus in the "
+                  "upper block, the transformer in the lower. Follows means "
+                  "the value is fixed by others rather than chosen.")
+
+table_before(A, ["Parameter", "Value", "Source"],
+             [["Desired distance, regression", "0.1", PAPER],
+              ["Desired distance, classification", "2.0, the pool's lower "
+               "quartile", OURS],
+              ["Sampling temperature", "1.0, no scaling", OURS],
+              ["Candidates per parent, k", "1 as the paper specifies; 8 for "
+               "the step-control extension", PAPER]],
+             [2.0, 2.75, 0.85], left_cols=(1,))
+caption_before(A, "Table A.3  The operator as queried during search. Only the "
+                  "first row applies to the replication proper; the rest are "
+                  "recorded in every result file.")
+
+unnumber(heading_before(A, "Appendix B  Reproducing the study", 2))
+para_before(A, "Each stage writes files the next one reads, and every stage "
+               "skips work already on disk, so an interrupted run is resumed "
+               "by repeating its command. The first four stages build the "
+               "operator and take roughly a working day in total; everything "
+               "after them reuses it.")
+for line, note in (
+        ("python -m tsgp.fetch_datasets",
+         "caches the five PMLB benchmarks locally, after which no network "
+         "access is needed"),
+        ("python -m tsgp.data_generator --output data/training",
+         "runs standard GP on the 50 synthetic problems and pairs the "
+         "expressions it visits by semantic similarity, about three hours"),
+        ("python -m tsgp.train_transformer --data data/training "
+         "--checkpoints checkpoints_adamw",
+         "trains the operator, eight epochs at about 49 minutes each on the "
+         "GPU, with a checkpoint after every epoch"),
+        ("python -m tsgp.run_experiments --weights "
+         "checkpoints_adamw/tsgp_final.npy --output results_v7",
+         "the headline grid: both methods, five datasets, 30 runs each"),
+        ("python -m tsgp.run_experiments ... --step-k 8 --step-anneal "
+         "--step-frac-start 1.0 --step-frac-end 0.02 --output results_anneal_b",
+         "the step-control extension of Section 7.7"),
+        ("set TSGP_NO_DIVISION=1  &  python -m tsgp.run_experiments "
+         "--methods stdgp --output results_nodiv",
+         "the primitive-set comparison of Section 7.8"),
+        ("run_classification_pipeline.cmd, then run_remaining.cmd, "
+         "run_strengthen.cmd and run_final.cmd",
+         "the classification chapter in order: pool, training, then each grid"),
+        ("python summarise_classification.py  and  python baselines_ml.py",
+         "the classification tables and the standard-classifier baselines"),
+        ("python make_figures.py  then  python build_report.py",
+         "redraws every figure from the result files and rebuilds this "
+         "document")):
+    # body text is justified, which stretches a monospace command into
+    # widely spaced columns; commands are set flush left instead
+    p = para_before(A, "", align=WD_ALIGN_PARAGRAPH.LEFT)
+    r = p.add_run(line)
+    r.font.name = "Consolas"
+    r.font.size = Pt(9)
+    p.add_run(f"\n{note}").italic = True
+
+unnumber(heading_before(A, "Appendix C  Full distributions", 2))
+para_before(A, "Chapters 6 to 8 quote medians, which is what the original "
+               "paper reports and what the rank-sum test compares. The spread "
+               "matters too, and in one respect it matters more: the standard "
+               "GP baseline is far more variable from run to run than TSGP, so "
+               "the two methods differ in consistency as well as in level.")
+
+
+# The two tables below are read off the result files at build time rather than
+# typed in, for the same reason the figures are: a number that has to be
+# copied by hand is a number that can fall out of step with the data.
+def _runs(directory, method):
+    import glob
+    import json
+    out = {}
+    for f in glob.glob(os.path.join(directory, "runs", "*.json")):
+        r = json.load(open(f))
+        if r["method"] == method:
+            out.setdefault(r["dataset"], []).append(r)
+    return out
+
+
+def _stat(rows, key):
+    import numpy as np
+    v = np.array([r[key] for r in rows], dtype=float)
+    return (np.median(v), v.mean(),
+            np.percentile(v, 25), np.percentile(v, 75), len(v))
+
+
+DS = [("1030_ERA", "ERA"), ("1027_ESL", "ESL"),
+      ("690_visualizing_galaxy", "Galaxy"), ("1029_LEV", "LEV"),
+      ("529_pollen", "pollen")]
+
+rows = []
+for key, label in DS:
+    for arm, d, m in (("TSGP", "results_v7", "tsgp"),
+                      ("standard GP", "results_v7", "stdgp"),
+                      ("TSGP + control", "results_anneal_b", "tsgp"),
+                      ("standard GP, no division", "results_nodiv", "stdgp")):
+        rs = _runs(d, m).get(key)
+        if not rs:
+            continue
+        md, mn, q1, q3, n = _stat(rs, "test_rmse")
+        smd, _, sq1, sq3, _ = _stat(rs, "best_size")
+        rows.append([label if arm == "TSGP" else "", arm, str(n),
+                     f"{md:.4f}", f"{mn:.4f}", f"{q1:.4f} to {q3:.4f}",
+                     f"{smd:.0f}", f"{sq1:.0f} to {sq3:.0f}"])
+table_before(A, ["Dataset", "Arm", "n", "Median", "Mean", "IQR", "Size",
+                 "Size IQR"], rows,
+             [0.62, 1.22, 0.28, 0.66, 0.66, 1.06, 0.42, 0.78],
+             left_cols=(1,))
+caption_before(A, "Table C.1  Test RMSE and solution size on the regression "
+                  "benchmarks, 30 runs per cell. The first two arms are the "
+                  "replication of Chapter 6; the third is the extension of "
+                  "Section 7.7 and is not equal-budget; the fourth is the "
+                  "primitive-set comparison of Section 7.8.")
+
+rows = []
+for key, label in DS:
+    for task, arm, d, m in (("median split", "TSGP", "results_clf_k1", "tsgp"),
+                            ("median split", "standard GP", "results_clf",
+                             "stdgp"),
+                            ("middle band", "TSGP", "results_clfmid_k1",
+                             "tsgp"),
+                            ("middle band", "standard GP", "results_clfmid",
+                             "stdgp")):
+        rs = _runs(d, m).get(key)
+        if not rs:
+            continue
+        md, mn, q1, q3, n = _stat(rs, "test_acc")
+        auc = _stat(rs, "test_auc")[0]
+        size = _stat(rs, "size")[0]
+        maj = _stat(rs, "majority_baseline")[0]
+        rows.append([label if task == "median split" and arm == "TSGP" else "",
+                     task, arm, str(n), f"{md:.4f}",
+                     f"{q1:.4f} to {q3:.4f}", f"{auc:.4f}", f"{size:.0f}",
+                     f"{maj:.3f}"])
+table_before(A, ["Dataset", "Task", "Arm", "n", "Accuracy", "IQR", "AUC",
+                 "Size", "Majority"], rows,
+             [0.6, 0.86, 0.94, 0.26, 0.7, 1.06, 0.58, 0.42, 0.72],
+             left_cols=(1, 2))
+caption_before(A, "Table C.2  Classification, both label constructions, at "
+                  "equal budget and 30 runs per cell. Majority is the accuracy "
+                  "of always predicting the more frequent class, and is the "
+                  "level any usable model has to clear.")
+
+# ----------------------------------------------------------------- glossary
+# Every term is also defined at first use; the glossary is for the reader who
+# meets one of them again forty pages later.
+R = find_heading("References", level=1)
+clear_section("Glossary of terms")
+para_before(R, "Terms are defined at first use in the main text and are "
+               "collected here for reference. The abbreviations used "
+               "throughout are listed separately in the front matter.")
+for term, definition in [
+    ("Best-so-far reporting", "reporting the best solution found at any point "
+     "in a run rather than the best in the final population. With "
+     "generational replacement and no elitism the two differ, because the best "
+     "individual is routinely destroyed before the run ends."),
+    ("Bloat", "growth in program size across generations without a matching "
+     "improvement in fitness."),
+    ("Decision value", "the real-valued output of an expression read as a "
+     "classifier: its sign gives the predicted class and its magnitude the "
+     "confidence."),
+    ("Desired semantic distance", "the distance requested of the learned "
+     "operator when it is asked for an offspring, written SD_d. The paper sets "
+     "it to 0.1; Chapter 8 rescales it to 2.0 for classification."),
+    ("Double tournament", "a selection operator combining a fitness "
+     "tournament with a parsimony tournament, used during data generation so "
+     "that the pool collected is diverse without being dominated by large "
+     "trees."),
+    ("Ephemeral random constant", "a numeric leaf drawn, when a tree is built, "
+     "from a fixed set of values: here the grid from -0.5 to 0.5 in steps of "
+     "0.1."),
+    ("Equal budget", "a comparison in which the methods being compared spend "
+     "the same number of model evaluations per generation."),
+    ("Geometric semantic operator", "a variation operator constructed so that "
+     "the offspring provably lies at a controlled position between or near its "
+     "parents in semantic space."),
+    ("Grammar-constrained decoding", "masking, before each token is sampled, "
+     "any token that would make a valid expression tree impossible, so that "
+     "every generated sequence is syntactically valid and none has to be "
+     "discarded and resampled."),
+    ("Logistic loss", "the smooth classification objective log(1 + exp(-y "
+     "f(x))), used as fitness in Chapter 8 because accuracy is piecewise "
+     "constant and offers selection no gradient between boundary crossings."),
+    ("Majority-class baseline", "the accuracy obtained by always predicting "
+     "the more frequent class, and so the level any usable classifier has to "
+     "clear."),
+    ("Margin", "the quantity y f(x): positive when a prediction is correct, "
+     "and larger the more confidently correct it is."),
+    ("Median split", "the first label construction of Chapter 8: the target "
+     "is thresholded at a cut chosen to divide the training half as evenly as "
+     "the ties in these discrete targets allow."),
+    ("Middle band", "the second label construction of Chapter 8: the positive "
+     "class is the central third of the training distribution, which no linear "
+     "model can represent."),
+    ("Prefix notation", "writing a tree as a flat sequence in pre-order, so "
+     "that add(x0, mul(x1, 0.3)) becomes [add, x0, mul, x1, 0.3]. This is what "
+     "allows a tree to be treated as a sequence of tokens."),
+    ("Protected division", "division that returns 1.0 when the absolute value "
+     "of the denominator falls below 1e-6, rather than failing."),
+    ("Ramped half-and-half", "an initialisation that mixes tree shapes and "
+     "depths across the starting population."),
+    ("Semantic distance", "the Euclidean distance between the semantics of "
+     "two expressions."),
+    ("Semantics", "the vector of outputs an expression produces on a fixed "
+     "set of probe inputs. It describes what an expression does, as against "
+     "how it is built."),
+    ("Solution size", "the number of nodes in an expression tree."),
+    ("Step-size control", "selecting, from several sampled offspring, the one "
+     "whose semantic distance from the parent is closest to a target. The "
+     "original paper lists this as future work; Section 7.7 supplies it "
+     "externally."),
+    ("Step-size floor", "the smallest parent-to-offspring semantic distance "
+     "the learned operator can produce, about 0.7 here, which it does not fall "
+     "below however much smaller a distance is requested."),
+    ("Teacher forcing", "training a decoder on the true preceding tokens of "
+     "the target rather than on the tokens it generated itself."),
+    ("Tournament selection", "choosing the fittest of a randomly drawn subset "
+     "of the population, of size five throughout this study."),
+    ("Transfer control", "the arm in which the regression-trained operator is "
+     "run on the classification benchmarks, which is what measures whether "
+     "retraining on classification data was necessary."),
+    ("Wilcoxon rank-sum test", "the non-parametric test of whether two "
+     "independent samples differ in location, used at the 5% level throughout, "
+     "as in the original paper."),
+]:
+    rich_before(R, [(term, True), (f"  {definition}", False)])
+
+# -------------------------------------------------------------------- index
+# Entries are written with a placeholder and filled from the rendered PDF in
+# the same pass that fills the two front-matter lists, since neither the pages
+# nor the terms can be known before the document is laid out.
+INDEX_TERMS = [
+    ("AdamW", r"AdamW"),
+    ("batched sampler", r"batched (?:sampler|version)|batched decoder"),
+    ("best-so-far reporting", r"best-so-far|best performing solution"),
+    ("bloat", r"\bbloat"),
+    ("classification, binary", r"binary classification"),
+    ("DEAP", r"DEAP"),
+    ("decision value", r"decision value"),
+    ("Deep Symbolic Regression", r"Deep Symbolic Regression|\bDSR\b"),
+    ("double tournament", r"double tournament"),
+    ("ephemeral random constant", r"ephemeral random constant|\bERC\b"),
+    ("equal budget", r"equal[- ]budget"),
+    ("FAISS", r"FAISS"),
+    ("geometric semantic GP", r"[Gg]eometric [Ss]emantic"),
+    ("grammar-constrained decoding", r"[Gg]rammar-constrained|syntax control"),
+    ("logistic loss", r"logistic loss"),
+    ("logistic regression", r"[Ll]ogistic regression"),
+    ("majority-class baseline", r"majority[- ](?:class )?baseline"),
+    ("median split", r"median[- ]split|median split"),
+    ("middle band", r"middle[- ]band"),
+    ("nearest neighbours", r"nearest[- ]neighbour"),
+    ("PMLB", r"PMLB|Penn Machine Learning"),
+    ("prefix notation", r"prefix \(?(?:pre-order)?\)? ?notation|prefix "
+                        r"notation"),
+    ("protected division", r"[Pp]rotected division|protdiv"),
+    ("ramped half-and-half", r"[Rr]amped [Hh]alf-and-[Hh]alf"),
+    ("reproducibility", r"[Rr]eproducibilit"),
+    ("RMSE", r"RMSE|root mean squared error"),
+    ("semantic distance", r"semantic distance"),
+    ("semantics", r"\bsemantics\b"),
+    ("SLIM_GSGP", r"SLIM_GSGP"),
+    ("solution size", r"solution size"),
+    ("step-size control", r"step-size control|step selection|targeted step"),
+    ("step-size floor", r"step-size floor|floor of|its floor"),
+    ("teacher forcing", r"[Tt]eacher forcing"),
+    ("tournament selection", r"[Tt]ournament selection"),
+    ("training pairs", r"training pairs|five million pairs|semantic pair"),
+    ("transformer", r"[Tt]ransformer"),
+    ("Wilcoxon rank-sum test", r"Wilcoxon"),
+]
+clear_section("Index")
+index_head = find_heading("Index", level=1)
+para_before_index = doc.add_paragraph(
+    "Page numbers refer to the chapters and appendices; terms are not indexed "
+    "from the glossary, where each is defined in one place.", style=BODY)
+index_head._p.addnext(para_before_index._p)
+for term, _ in INDEX_TERMS:
+    from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+    p = doc.add_paragraph("", style=BODY)
+    pf = p.paragraph_format
+    pf.tab_stops.add_tab_stop(Inches(6.4), WD_TAB_ALIGNMENT.RIGHT,
+                              WD_TAB_LEADER.DOTS)
+    # body spacing is set for prose; an index of one-line entries wants less
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(2)
+    p.add_run(f"{term}\t{PLACEHOLDER_PAGE}")
 
 
 # ============================================================ 2. renumber ==
@@ -1072,22 +1513,30 @@ def renumber_captions():
                 chapter += 1
                 fig_n = tab_n = 0
             continue
-        if st == FIGCAP and txt:
+        if st not in (FIGCAP, TABCAP) or not txt:
+            continue
+        kind = "Figure" if st == FIGCAP else "Table"
+        # Appendix captions carry their own letters and sit outside the
+        # chapter numbering, so they are collected for the lists but left as
+        # written; only captions inside the numbered chapters are renumbered.
+        if not in_chapters:
+            m = re.match(r"((?:Figure|Table)\s+[A-Z]\.\d+)\s+(.*)", txt,
+                         re.S)
+            if m:
+                (figures if kind == "Figure" else tables).append(
+                    (m.group(1), m.group(2)))
+            continue
+        if kind == "Figure":
             fig_n += 1
             label = f"Figure {chapter}.{fig_n}"
-            body_text = re.sub(r"^(PLACEHOLDER|Figure\s+\d+\.\d+)\s*", "", txt)
-            for r in p.runs[1:]:
-                r.text = ""
-            p.runs[0].text = f"{label}  {body_text}"
-            figures.append((label, body_text))
-        elif st == TABCAP and txt:
+        else:
             tab_n += 1
             label = f"Table {chapter}.{tab_n}"
-            body_text = re.sub(r"^(PLACEHOLDER|Table\s+\d+\.\d+)\s*", "", txt)
-            for r in p.runs[1:]:
-                r.text = ""
-            p.runs[0].text = f"{label}  {body_text}"
-            tables.append((label, body_text))
+        body_text = re.sub(rf"^(PLACEHOLDER|{kind}\s+\d+\.\d+)\s*", "", txt)
+        for r in p.runs[1:]:
+            r.text = ""
+        p.runs[0].text = f"{label}  {body_text}"
+        (figures if kind == "Figure" else tables).append((label, body_text))
     return figures, tables
 
 
@@ -1127,8 +1576,8 @@ clear_list("List of Tables")
 # a real page number, so the document is already its final length when it is
 # measured, then reading the number printed at the head of each page and
 # writing it in without changing a single line. The measurement repeats until
-# nothing moves, which is also what proves the numbers are stable.
-PLACEHOLDER_PAGE = "00"
+# nothing moves, which is also what proves the numbers are stable. The index
+# is filled from the same pass, for the same reason.
 TMP_PDF = os.path.splitext(DST)[0] + "_tmp.pdf"
 
 
@@ -1183,45 +1632,72 @@ def refresh_and_render(docx_path, pdf_path):
 
 
 def printed_pages(pdf_path, entries):
-    """The number printed on the page each caption actually lands on.
+    """Where every caption lands, and every index term appears.
 
     Only pages numbered in arabic are considered, which excludes the front
     matter: the two lists repeat every caption label verbatim, and a plain
     label search would otherwise match the list entry rather than the caption.
     Captions are matched on their opening words as well as their label, so a
     sentence such as "as Table 6.1 shows" cannot claim the number instead.
+
+    Index terms stop at the glossary, which defines all of them in one place
+    and would otherwise appear against every entry, as would the index itself.
     """
     import pymupdf
-    out = {}
+    caption_pages, term_pages = {}, {}
     d = pymupdf.open(pdf_path)
+    body = []
     for page in d:
         text = page.get_text()
         head = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-        if not re.fullmatch(r"\d+", head):
-            continue
-        flat = re.sub(r"\s+", " ", text)
-        for label, body in entries:
-            if label in out:
-                continue
-            opening = re.sub(r"\s+", " ", body)[:25]
-            if re.search(re.escape(label) + r"\s+" + re.escape(opening), flat):
-                out[label] = head
+        if re.fullmatch(r"\d+", head):
+            body.append((head, re.sub(r"\s+", " ", text)))
     d.close()
-    return out
+
+    for head, flat in body:
+        for label, text in entries:
+            if label in caption_pages:
+                continue
+            opening = re.sub(r"\s+", " ", text)[:25]
+            if re.search(re.escape(label) + r"\s+" + re.escape(opening), flat):
+                caption_pages[label] = head
+
+    cut = next((i for i, (_, flat) in enumerate(body)
+                if "Glossary of terms" in flat), len(body))
+    for term, pattern in INDEX_TERMS:
+        hits, seen = [], set()
+        for head, flat in body[:cut]:
+            if head not in seen and re.search(pattern, flat):
+                seen.add(head)
+                hits.append(head)
+        if hits:
+            # a term running through most of the report tells the reader
+            # nothing by listing forty pages, and would wrap the entry
+            term_pages[term] = ", ".join(hits[:8]) + \
+                (" and passim" if len(hits) > 8 else "")
+    return caption_pages, term_pages
 
 
-def write_page_numbers(docx_path, pages):
-    """Set the measured numbers in the lists, changing no line's length."""
+def write_page_numbers(docx_path, pages, terms):
+    """Set the measured numbers, changing no line's length.
+
+    A caption entry is found by its label, an index entry by the term standing
+    before the tab; nothing else in the document carries a tab, so the two
+    cannot be confused with body text.
+    """
     d2 = Document(docx_path)
     changed = 0
     for p in d2.paragraphs:
         if "\t" not in p.text:
             continue
-        m = re.match(r"((?:Figure|Table) \d+\.\d+)\b", p.text)
-        if not m or m.group(1) not in pages:
-            continue
         stem, _, current = p.text.rpartition("\t")
-        want = pages[m.group(1)]
+        m = re.match(r"((?:Figure|Table) [A-Z0-9]+\.\d+)\b", p.text)
+        if m and m.group(1) in pages:
+            want = pages[m.group(1)]
+        elif stem in terms:
+            want = terms[stem]
+        else:
+            continue
         if current == want:
             continue
         p.runs[0].text = f"{stem}\t{want}"
@@ -1238,18 +1714,19 @@ rebuild_list("List of Tables", tables)
 doc.save(DST)
 
 entries = figures + tables
-pages = {}
+pages, terms = {}, {}
 try:
     import pymupdf                                             # noqa: F401
     for attempt in range(1, 4):
         if not refresh_and_render(DST, TMP_PDF):
             print("  (could not render - page numbers left as placeholders)")
             break
-        pages = printed_pages(TMP_PDF, entries)
+        pages, terms = printed_pages(TMP_PDF, entries)
         os.remove(TMP_PDF)
-        moved = write_page_numbers(DST, pages)
+        moved = write_page_numbers(DST, pages, terms)
         print(f"  pass {attempt}: located {len(pages)} of {len(entries)} "
-              f"captions, {moved} page numbers rewritten")
+              f"captions and {len(terms)} of {len(INDEX_TERMS)} index terms, "
+              f"{moved} entries rewritten")
         if not moved:
             break
     else:
@@ -1260,6 +1737,9 @@ except ImportError:
 missing = [lab for lab, _ in entries if lab not in pages]
 if missing:
     print(f"  !! not located in the rendered PDF: {', '.join(missing)}")
+unfound = [t for t, _ in INDEX_TERMS if t not in terms]
+if unfound:
+    print(f"  !! index terms never matched: {', '.join(unfound)}")
 
 print(f"\nwritten: {DST}")
 print("\nfigures:")
