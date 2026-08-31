@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(brew list *)",
-      "Bash(pdftotext \"/Users/yashchoudhary/Documents/Professional/MSBA/Trimester 3/Capstone/2501.18479v1.pdf\" -)"
+      "Bash(pdftotext \"/Users/yashchoudhary/Documents/Professional/MSBA/Trimester 3/Capstone/2501.18479v1.pdf\" -)",
+      "Bash(grep -n \"^#\\\\{2,3\\\\} \" README.md)"
     ]
   }
 }

@@ -2,6 +2,7 @@ import glob
 import os
 import pickle
 import re
+import sys
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -123,6 +124,46 @@ def prompt_resume(checkpoint_dir):
             print("  Enter Y, n, or an epoch number.")
 
 
+def make_optimizer():
+    """AdamW at the paper's fixed learning rate (Sect. 4.1).
+
+    Keras moved AdamW between namespaces across the TF versions this project
+    targets -- 2.10 (the last native-Windows GPU build) exposes it under
+    `optimizers.experimental`, 2.11+ promotes it to `optimizers` -- so resolve
+    it rather than pinning one path.
+    """
+    lr = config.TRANSFORMER_LEARNING_RATE
+    wd = config.TRANSFORMER_WEIGHT_DECAY
+
+    candidates = []
+    if hasattr(keras.optimizers, "AdamW"):
+        candidates.append(keras.optimizers.AdamW)
+    experimental = getattr(keras.optimizers, "experimental", None)
+    if experimental is not None and hasattr(experimental, "AdamW"):
+        candidates.append(experimental.AdamW)
+
+    for cls in candidates:
+        # TF 2.10's experimental optimizers default to jit_compile=True, which
+        # routes the update through XLA. XLA then wants libdevice and ptxas
+        # from a full CUDA toolkit, which the conda cudatoolkit *runtime*
+        # does not ship -- so training dies at the first step. The model is
+        # 934K parameters; XLA on the update step is not worth a toolchain
+        # dependency, so switch it off wherever the argument exists.
+        try:
+            return cls(learning_rate=lr, weight_decay=wd, jit_compile=False)
+        except TypeError:
+            pass
+        try:
+            return cls(learning_rate=lr, weight_decay=wd)
+        except TypeError:
+            continue
+
+    raise RuntimeError(
+        "No AdamW implementation found in this Keras build; the paper's "
+        "Sect. 4.1 configuration cannot be reproduced with plain Adam."
+    )
+
+
 def masked_loss(y_true, y_pred):
     loss_fn = keras.losses.SparseCategoricalCrossentropy(
         from_logits=True, reduction="none")
@@ -132,7 +173,8 @@ def masked_loss(y_true, y_pred):
 
 
 def train_model(training_data, checkpoint_dir="checkpoints",
-                epochs=None, batch_size=None, verbose=True):
+                epochs=None, batch_size=None, fresh=False, normalize_sd=None,
+                verbose=True):
     if epochs is None:
         epochs = config.TRANSFORMER_EPOCHS
     if batch_size is None:
@@ -140,9 +182,25 @@ def train_model(training_data, checkpoint_dir="checkpoints",
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    start_epoch, resume_path = prompt_resume(checkpoint_dir)
+    if fresh:
+        start_epoch, resume_path = 0, None
+        if verbose:
+            print("Starting fresh (--fresh); ignoring any existing checkpoint.")
+    elif not sys.stdin or not sys.stdin.isatty():
+        # Unattended run: input() would block forever, so resume from the
+        # latest checkpoint automatically instead of asking.
+        resume_path, start_epoch = find_latest_checkpoint(checkpoint_dir)
+        if verbose:
+            print(f"Non-interactive session; "
+                  + (f"resuming from {resume_path} (epoch {start_epoch})."
+                     if resume_path else "no checkpoint found, starting fresh."))
+    else:
+        start_epoch, resume_path = prompt_resume(checkpoint_dir)
 
-    base_model = create_model()
+    base_model = create_model(normalize_sd=normalize_sd)
+    if verbose:
+        print(f"SD conditioning: "
+              f"{'log1p + standardised' if base_model.normalize_sd else 'raw scalar'}")
 
     if resume_path is not None:
         _load_checkpoint(base_model, resume_path)
@@ -152,8 +210,11 @@ def train_model(training_data, checkpoint_dir="checkpoints",
 
     wrapper = TSGPTrainingModel(base_model)
 
-    optimizer = keras.optimizers.Adam(
-        learning_rate=config.TRANSFORMER_LEARNING_RATE)
+    optimizer = make_optimizer()
+    if verbose:
+        print(f"Optimizer: {type(optimizer).__name__} "
+              f"(lr={config.TRANSFORMER_LEARNING_RATE}, "
+              f"weight_decay={config.TRANSFORMER_WEIGHT_DECAY})")
 
     wrapper.compile(optimizer=optimizer, loss=masked_loss)
 
@@ -215,19 +276,74 @@ def train_model(training_data, checkpoint_dir="checkpoints",
     return base_model
 
 
-def train_from_data(data_path, checkpoint_dir="checkpoints", verbose=True):
+def train_from_data(data_path, checkpoint_dir="checkpoints", fresh=False,
+                    batch_size=None, epochs=None, normalize_sd=None,
+                    max_sd=None, verbose=True):
     setup_gpu()
     if verbose:
-        print("Loading training data...")
+        print(f"Loading training data from {data_path} ...")
     training_data = load_training_data(data_path)
+
+    if max_sd is not None:
+        # DEVIATION from Sect. 4.1, which keeps every pair with
+        # SD != 0 and SD < 100. Restricting the range is a diagnostic: the
+        # operator is always queried at SD_d = 0.1 but trained across the whole
+        # range, and the SD conditioning is measurably inert, so the model
+        # samples from its marginal rather than the requested distance.
+        before = len(training_data)
+        training_data = [d for d in training_data if d["sd"] <= max_sd]
+        if verbose:
+            print(f"DEVIATION: filtered to SD <= {max_sd} -> "
+                  f"{len(training_data):,} of {before:,} pairs "
+                  f"({len(training_data)/before*100:.1f}%)")
+
     if verbose:
-        print(f"Loaded {len(training_data)} training pairs")
+        bs = batch_size or config.TRANSFORMER_BATCH_SIZE
+        ep = epochs or config.TRANSFORMER_EPOCHS
+        steps = (len(training_data) + bs - 1) // bs
+        print(f"Loaded {len(training_data):,} training pairs")
+        print(f"Batch size {bs} -> {steps:,} updates/epoch, "
+              f"{steps * ep:,} over {ep} epochs")
         print("Starting training...")
 
     model = train_model(training_data, checkpoint_dir=checkpoint_dir,
-                        verbose=verbose)
+                        epochs=epochs, batch_size=batch_size, fresh=fresh,
+                        normalize_sd=normalize_sd, verbose=verbose)
     return model
 
 
 if __name__ == "__main__":
-    train_from_data("data/training/training_pairs.pkl")
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Train the TSGP transformer (paper Sect. 4.1).")
+    parser.add_argument("--data", default="data/training/training_pairs.pkl",
+                        help="Path to training_pairs.pkl")
+    parser.add_argument("--checkpoints", default="checkpoints",
+                        help="Directory for per-epoch weights. Point this at a "
+                             "new directory to keep an existing model intact.")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Ignore existing checkpoints and train from "
+                             "scratch (no resume prompt)")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help=f"Override the batch size (default "
+                             f"{config.TRANSFORMER_BATCH_SIZE}). The paper "
+                             f"does not state one; Keras defaults to 32, "
+                             f"which is 8x more updates per epoch.")
+    parser.add_argument("--epochs", type=int, default=None,
+                        help=f"Override the epoch count (default "
+                             f"{config.TRANSFORMER_EPOCHS})")
+    parser.add_argument("--sd-normalize", action="store_true",
+                        help="Feed SD as log1p + standardised instead of the "
+                             "raw scalar. Must match at inference time.")
+    parser.add_argument("--max-sd", type=float, default=None,
+                        help="DEVIATION from Sect. 4.1: train only on pairs "
+                             "with SD <= this. Diagnostic use only.")
+    parser.add_argument("--quiet", action="store_true")
+    args = parser.parse_args()
+
+    train_from_data(args.data, checkpoint_dir=args.checkpoints,
+                    fresh=args.fresh, batch_size=args.batch_size,
+                    epochs=args.epochs,
+                    normalize_sd=True if args.sd_normalize else None,
+                    max_sd=args.max_sd, verbose=not args.quiet)

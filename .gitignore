@@ -1,3 +1,17 @@
+# Generated training data (~1.6 GB)
 data/
+
+# Model weights. Each variant is 8-36 MB; regenerate with train_transformer.py
 checkpoints/
-tsgp/__pycache__/
+checkpoints_*/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# The paper itself is not ours to redistribute — download from arXiv:2501.18479
+*.pdf
+!TSGP_Replication_Report.pdf
+
+# Incidental screenshots
+*.png

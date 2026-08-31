@@ -36,7 +36,29 @@ TRANSFORMER_NUM_DECODER_LAYERS = 2
 TRANSFORMER_MAX_SEQ_LEN = 100
 TRANSFORMER_DROPOUT = 0.1
 TRANSFORMER_LEARNING_RATE = 1e-3
+# Paper Sect. 4.1 specifies AdamW at lr 1e-3 but does not state a weight decay;
+# this is the Keras AdamW default, which is what their Keras implementation
+# would have used.
+TRANSFORMER_WEIGHT_DECAY = 0.004
 TRANSFORMER_EPOCHS = 8
 TRANSFORMER_BATCH_SIZE = 256
 
+# --- semantic-distance conditioning ---
+# Sect. 3.2 states SD is supplied to the encoder and decoder so the desired
+# step size can be controlled. Feeding the RAW scalar makes that nominal only:
+# 75% of training SDs are below 0.667 while the tail reaches 100, so a linear
+# projection sees almost no variation across the bulk and the learned weight
+# stays tiny (measured: ||0.1*W|| = 0.032 against ||bias|| = 1.065, and
+# SD_d = 0.0 vs 0.1 produce byte-identical output).
+# Normalising with log1p + standardisation gives the projection a
+# well-conditioned input. Off by default so existing checkpoints behave as
+# trained; enable per-run with --sd-normalize.
+TRANSFORMER_SD_NORMALIZE = False
+TRANSFORMER_SD_LOG_MEAN = 0.464287   # mean of log1p(SD) over the 5M pairs
+TRANSFORMER_SD_LOG_STD = 0.737271    # std  of log1p(SD) over the 5M pairs
+
 TSGP_SD_DESIRED = 0.1
+# Sampling temperature for the transformer variation operator. The paper does
+# not state one, so 1.0 (no scaling) is the neutral default; override per-run
+# with --temperature rather than changing this.
+TSGP_TEMPERATURE = 1.0

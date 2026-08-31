@@ -100,6 +100,7 @@ class TSGPTransformer(keras.Model):
                  dff=None,
                  max_seq_len=config.TRANSFORMER_MAX_SEQ_LEN,
                  dropout_rate=config.TRANSFORMER_DROPOUT,
+                 normalize_sd=None,
                  **kwargs):
         super().__init__(**kwargs)
         if dff is None:
@@ -107,6 +108,11 @@ class TSGPTransformer(keras.Model):
         self.d_model = d_model
         self.max_seq_len = max_seq_len
         self.vocab_size = vocab_size
+        # Input transform only -- adds no weights, so checkpoints stay
+        # interchangeable between the two variants. It must nevertheless match
+        # how the model was trained, hence it is explicit rather than implicit.
+        self.normalize_sd = (config.TRANSFORMER_SD_NORMALIZE
+                             if normalize_sd is None else normalize_sd)
 
         self.enc_embedding = layers.Embedding(vocab_size, d_model)
         self.dec_embedding = layers.Embedding(vocab_size, d_model)
@@ -133,6 +139,13 @@ class TSGPTransformer(keras.Model):
         mask = tf.cast(tf.not_equal(seq, PAD_ID), tf.float32)
         return tf.expand_dims(tf.expand_dims(mask, 1), 1)
 
+    def _prep_sd(self, sd_input):
+        """Optionally map raw SD onto a standardised log scale."""
+        if not self.normalize_sd:
+            return sd_input
+        z = tf.math.log1p(tf.maximum(sd_input, 0.0))
+        return (z - config.TRANSFORMER_SD_LOG_MEAN) / config.TRANSFORMER_SD_LOG_STD
+
     def encode(self, enc_input, sd_input, training=False):
         enc_padding_mask = self._create_padding_mask(enc_input)
 
@@ -140,7 +153,7 @@ class TSGPTransformer(keras.Model):
         x = x * np.sqrt(float(self.d_model))
         x = self.enc_pos_encoding(x)
 
-        sd_expanded = tf.expand_dims(tf.expand_dims(sd_input, -1), -1)
+        sd_expanded = tf.expand_dims(tf.expand_dims(self._prep_sd(sd_input), -1), -1)
         sd_embed = self.sd_projection(sd_expanded)
         sd_embed = tf.broadcast_to(sd_embed, tf.shape(x))
         x = x + sd_embed
@@ -166,7 +179,7 @@ class TSGPTransformer(keras.Model):
         x = x * np.sqrt(float(self.d_model))
         x = self.dec_pos_encoding(x)
 
-        sd_expanded = tf.expand_dims(tf.expand_dims(sd_input, -1), -1)
+        sd_expanded = tf.expand_dims(tf.expand_dims(self._prep_sd(sd_input), -1), -1)
         sd_embed = self.sd_projection(sd_expanded)
         sd_embed = tf.broadcast_to(sd_embed, tf.shape(x))
         x = x + sd_embed
@@ -189,8 +202,8 @@ class TSGPTransformer(keras.Model):
         return logits
 
 
-def create_model():
-    model = TSGPTransformer()
+def create_model(normalize_sd=None):
+    model = TSGPTransformer(normalize_sd=normalize_sd)
     enc_input = np.zeros((1, config.TRANSFORMER_MAX_SEQ_LEN), dtype=np.int32)
     dec_input = np.zeros((1, config.TRANSFORMER_MAX_SEQ_LEN), dtype=np.int32)
     sd_input = np.zeros((1,), dtype=np.float32)
